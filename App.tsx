@@ -4,61 +4,36 @@
  */
 
 import React from 'react';
-import {
-  SafeAreaView,
-  Text,
-  View,
-  StyleSheet,
-  StatusBar,
-} from 'react-native';
+import { NavigationContainer } from '@react-navigation/native';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
 
-function AppTest(): React.JSX.Element {
+// Importar las pantallas
+import HomeScreen from './src/screens/HomeScreen';
+import DetectionScreen from './src/screens/DetectionScreen';
+
+// Definir tipos de rutas
+export type RootStackParamList = {
+  Home: undefined;
+  Detection: undefined;
+};
+
+const Stack = createNativeStackNavigator<RootStackParamList>();
+
+function App(): React.JSX.Element {
   return (
-    <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="dark-content" backgroundColor="#f0fdf4" />
-      <View style={styles.content}>
-        <Text style={styles.title}>🍠 CamoteApp</Text>
-        <Text style={styles.subtitle}>Prueba Simple</Text>
-        <Text style={styles.text}>
-          Si ves esta pantalla, React Native funciona correctamente.
-        </Text>
-        <Text style={styles.text}>
-          El problema podría estar en React Navigation.
-        </Text>
-      </View>
-    </SafeAreaView>
+    <NavigationContainer>
+      <Stack.Navigator 
+        initialRouteName="Home"
+        screenOptions={{
+          headerShown: false, // Ocultamos la barra superior por defecto
+          animation: 'slide_from_right'
+        }}
+      >
+        <Stack.Screen name="Home" component={HomeScreen} />
+        <Stack.Screen name="Detection" component={DetectionScreen} />
+      </Stack.Navigator>
+    </NavigationContainer>
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f8fafc',
-  },
-  content: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-  },
-  title: {
-    fontSize: 32,
-    fontWeight: 'bold',
-    color: '#1e293b',
-    marginBottom: 8,
-  },
-  subtitle: {
-    fontSize: 24,
-    color: '#15803d',
-    marginBottom: 20,
-  },
-  text: {
-    fontSize: 16,
-    color: '#475569',
-    textAlign: 'center',
-    marginBottom: 12,
-    paddingHorizontal: 20,
-  },
-});
-
-export default AppTest;
+export default App;

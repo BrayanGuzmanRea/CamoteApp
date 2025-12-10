@@ -1,19 +1,20 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
-  Image,
   SafeAreaView,
   StatusBar,
+  ScrollView,
+  Alert,
+  Modal,
+  FlatList,
+  Image,
 } from 'react-native';
-
-// Definimos los tipos para la navegación (TypeScript)
-// Esto ayuda a que VS Code te sugiera los nombres de las pantallas
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { launchImageLibrary, Asset } from 'react-native-image-picker';
 
-// Asumimos que tus rutas se llaman 'Home' y 'Detection'
 type RootStackParamList = {
   Home: undefined;
   Detection: undefined;
@@ -22,159 +23,235 @@ type RootStackParamList = {
 type Props = NativeStackScreenProps<RootStackParamList, 'Home'>;
 
 const HomeScreen = ({ navigation }: Props) => {
+  
+  // --- ESTADOS ---
+  const [selectedPhotos, setSelectedPhotos] = useState<string[]>([]);
+  const [showModal, setShowModal] = useState(false);
 
-  const handleStart = () => {
-    // Navegar a la pantalla de detección (que crearemos luego)
-    // Por ahora, si presionas el botón dará error hasta que configuremos la ruta
-    navigation.navigate('Detection');
+  // --- FUNCIÓN: ABRIR GALERÍA ---
+  const handleOpenGallery = async () => {
+    try {
+      const result = await launchImageLibrary({
+        mediaType: 'photo',
+        selectionLimit: 0, // 0 = Múltiples fotos
+        quality: 1,
+      });
+
+      if (result.didCancel) return;
+
+      if (result.errorCode) {
+        Alert.alert('Error', result.errorMessage);
+        return;
+      }
+
+      if (result.assets && result.assets.length > 0) {
+        // Extraemos solo las URIs (rutas) de las fotos
+        // Filtramos para asegurar que no haya nulos
+        const uris = result.assets
+          .map(asset => asset.uri)
+          .filter((uri): uri is string => !!uri);
+        
+        setSelectedPhotos(uris);
+        setShowModal(true); // <--- ABRIMOS EL RESUMEN
+      }
+    } catch (error) {
+      console.error(error);
+      Alert.alert('Error', 'No se pudo abrir la galería');
+    }
   };
+
+  // --- FUNCIÓN: ELIMINAR FOTO DEL RESUMEN ---
+  const removePhoto = (uriToRemove: string) => {
+    const updatedList = selectedPhotos.filter(uri => uri !== uriToRemove);
+    setSelectedPhotos(updatedList);
+    // Si borra todas, cerramos el modal automáticamente
+    if (updatedList.length === 0) setShowModal(false);
+  };
+
+  // --- FUNCIÓN: PROCESAR (Mandar a IA) ---
+  const handleAnalyzeGallery = () => {
+    setShowModal(false);
+    console.log("Enviando fotos de galería a procesar:", selectedPhotos);
+    Alert.alert("Procesando", `Analizando ${selectedPhotos.length} imágenes...`);
+    // AQUÍ CONECTAREMOS CON LA LÓGICA DE RECORTE (TILING) EN LA FASE 3
+  };
+
+  // --- RENDER ITEM (CADA FOTO EN EL MODAL) ---
+  const renderGalleryItem = ({ item }: { item: string }) => (
+    <View style={styles.gridItem}>
+      <Image source={{ uri: item }} style={styles.gridImage} />
+      <TouchableOpacity 
+        style={styles.deleteButton} 
+        onPress={() => removePhoto(item)}
+      >
+        <Text style={styles.deleteText}>✕</Text>
+      </TouchableOpacity>
+    </View>
+  );
 
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="#f0fdf4" />
-      
-      {/* 1. Encabezado / Título */}
-      <View style={styles.header}>
-        <Text style={styles.uniText}>Universidad Señor de Sipán</Text>
-        <Text style={styles.title}>Detección de Gusano Minador</Text>
-        <Text style={styles.subtitle}>Cultivo de Camote</Text>
-      </View>
-
-      {/* 2. Área Central (Imagen o Icono representativo) */}
-      <View style={styles.centerContent}>
-        {/* Aquí podrías poner el logo de la USS o un ícono de una hoja */}
-        {/* Por ahora usaremos un contenedor visual simple */}
-        <View style={styles.iconPlaceholder}>
-          <Text style={styles.iconText}>🍠</Text>
-        </View>
+      <ScrollView contentContainerStyle={styles.scrollContent}>
         
-        <Text style={styles.instructionsTitle}>Instrucciones:</Text>
-        <View style={styles.instructionItem}>
-          <Text style={styles.bullet}>•</Text>
-          <Text style={styles.instructionText}>Mantén el celular a 45cm de la hoja.</Text>
+        {/* Encabezado */}
+        <View style={styles.header}>
+          <Text style={styles.uniText}>Universidad Señor de Sipán</Text>
+          <Text style={styles.thesisTitle}>Detección de Gusano Minador</Text>
+          <View style={styles.badge}>
+            <Text style={styles.badgeText}>Offline v0.0.1</Text>
+          </View>
         </View>
-        <View style={styles.instructionItem}>
-          <Text style={styles.bullet}>•</Text>
-          <Text style={styles.instructionText}>Asegúrate de tener buena iluminación.</Text>
-        </View>
-        <View style={styles.instructionItem}>
-          <Text style={styles.bullet}>•</Text>
-          <Text style={styles.instructionText}>Enfoca directamente el daño visible.</Text>
-        </View>
-      </View>
 
-      {/* 3. Botón de Acción */}
-      <View style={styles.footer}>
-        <TouchableOpacity style={styles.button} onPress={handleStart}>
-          <Text style={styles.buttonText}>INICIAR ESCANEO</Text>
-        </TouchableOpacity>
-        <Text style={styles.versionText}>Versión Tesis 1.0.0 (Offline)</Text>
-      </View>
+        {/* Bienvenida */}
+        <View style={styles.introSection}>
+          <Text style={styles.welcomeText}>Hola, Agricultor 👋</Text>
+          <Text style={styles.subText}>Selecciona una opción para comenzar el diagnóstico.</Text>
+        </View>
+
+        {/* Botones Principales */}
+        <View style={styles.actionsContainer}>
+          {/* CÁMARA */}
+          <TouchableOpacity 
+            style={[styles.cardButton, styles.cameraCard]}
+            onPress={() => navigation.navigate('Detection')}
+            activeOpacity={0.8}
+          >
+            <View style={styles.iconCircle}>
+              <Text style={styles.emoji}>📷</Text>
+            </View>
+            <View style={styles.textContainer}>
+              <Text style={styles.cardTitle}>Nueva Captura</Text>
+              <Text style={styles.cardDesc}>Usar la cámara en campo.</Text>
+            </View>
+          </TouchableOpacity>
+
+          {/* GALERÍA */}
+          <TouchableOpacity 
+            style={[styles.cardButton, styles.galleryCard]}
+            onPress={handleOpenGallery}
+            activeOpacity={0.8}
+          >
+            <View style={[styles.iconCircle, styles.galleryIcon]}>
+              <Text style={styles.emoji}>🖼️</Text>
+            </View>
+            <View style={styles.textContainer}>
+              <Text style={styles.cardTitle}>Cargar Fotos</Text>
+              <Text style={styles.cardDesc}>Seleccionar de la galería.</Text>
+            </View>
+          </TouchableOpacity>
+        </View>
+
+        {/* Info Box */}
+        <View style={styles.infoBox}>
+          <Text style={styles.infoTitle}>💡 Recuerda:</Text>
+          <Text style={styles.infoText}>Asegúrate de que las fotos estén bien enfocadas y a 45cm de distancia.</Text>
+        </View>
+
+      </ScrollView>
+
+      {/* --- MODAL DE RESUMEN (Igual al de la Cámara) --- */}
+      <Modal
+        animationType="slide"
+        transparent={false}
+        visible={showModal}
+        onRequestClose={() => setShowModal(false)}
+      >
+        <View style={styles.modalContainer}>
+          {/* Cabecera Modal */}
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Galería Seleccionada ({selectedPhotos.length})</Text>
+            <TouchableOpacity onPress={() => setShowModal(false)} style={styles.closeButton}>
+              <Text style={styles.closeText}>Cancelar</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Lista de Fotos */}
+          <FlatList
+            data={selectedPhotos}
+            renderItem={renderGalleryItem}
+            keyExtractor={(item, index) => item + index}
+            numColumns={2}
+            contentContainerStyle={{ padding: 10 }}
+          />
+
+          {/* Botón de Acción */}
+          <View style={styles.modalFooter}>
+            <TouchableOpacity style={styles.fullWidthButton} onPress={handleAnalyzeGallery}>
+              <Text style={styles.fullWidthButtonText}>CONFIRMAR Y ANALIZAR</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
     </SafeAreaView>
   );
 };
 
-// Estilos (Diseño visual)
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f8fafc', // Gris muy claro de fondo
-  },
+  // --- ESTILOS PRINCIPALES ---
+  container: { flex: 1, backgroundColor: '#f8fafc' },
+  scrollContent: { paddingBottom: 30 },
   header: {
-    padding: 24,
-    alignItems: 'center',
-    backgroundColor: '#fff',
-    borderBottomWidth: 1,
-    borderBottomColor: '#e2e8f0',
+    backgroundColor: '#ffffff', padding: 24, borderBottomWidth: 1, borderBottomColor: '#e2e8f0', alignItems: 'center',
   },
-  uniText: {
-    fontSize: 14,
-    color: '#64748b',
-    fontWeight: '600',
-    marginBottom: 8,
-    textTransform: 'uppercase',
+  uniText: { fontSize: 12, color: '#64748b', fontWeight: '700', textTransform: 'uppercase', marginBottom: 4 },
+  thesisTitle: { fontSize: 20, fontWeight: '800', color: '#0f172a', textAlign: 'center', marginBottom: 8 },
+  badge: { backgroundColor: '#dcfce7', paddingHorizontal: 10, paddingVertical: 2, borderRadius: 12 },
+  badgeText: { color: '#166534', fontSize: 10, fontWeight: '700' },
+  introSection: { padding: 24 },
+  welcomeText: { fontSize: 28, fontWeight: 'bold', color: '#1e293b', marginBottom: 8 },
+  subText: { fontSize: 16, color: '#64748b', lineHeight: 24 },
+  actionsContainer: { paddingHorizontal: 20 },
+  
+  // Tarjetas
+  cardButton: {
+    flexDirection: 'row', backgroundColor: 'white', padding: 20, borderRadius: 20, marginBottom: 16, alignItems: 'center',
+    elevation: 4, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.1, shadowRadius: 10,
   },
-  title: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#1e293b',
-    textAlign: 'center',
+  cameraCard: { borderLeftWidth: 6, borderLeftColor: '#15803d' },
+  galleryCard: { borderLeftWidth: 6, borderLeftColor: '#3b82f6' },
+  iconCircle: { width: 60, height: 60, borderRadius: 30, backgroundColor: '#dcfce7', justifyContent: 'center', alignItems: 'center', marginRight: 16 },
+  galleryIcon: { backgroundColor: '#dbeafe' },
+  emoji: { fontSize: 28 },
+  textContainer: { flex: 1 },
+  cardTitle: { fontSize: 18, fontWeight: 'bold', color: '#1e293b', marginBottom: 4 },
+  cardDesc: { fontSize: 14, color: '#64748b', lineHeight: 20 },
+  
+  infoBox: {
+    margin: 20, padding: 16, backgroundColor: '#fffbeb', borderRadius: 12, borderWidth: 1, borderColor: '#fcd34d',
   },
-  subtitle: {
-    fontSize: 18,
-    color: '#15803d', // Verde agrícola
-    fontWeight: '500',
-    marginTop: 4,
+  infoTitle: { fontWeight: 'bold', color: '#b45309', marginBottom: 4 },
+  infoText: { color: '#b45309', fontSize: 13 },
+
+  // --- ESTILOS DEL MODAL (Igual a DetectionScreen) ---
+  modalContainer: { flex: 1, backgroundColor: '#111827' }, // Fondo oscuro
+  modalHeader: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    padding: 20, borderBottomWidth: 1, borderBottomColor: '#374151', backgroundColor: '#1f2937',
   },
-  centerContent: {
-    flex: 1,
-    justifyContent: 'center',
-    paddingHorizontal: 32,
+  modalTitle: { color: 'white', fontSize: 18, fontWeight: 'bold' },
+  closeButton: { padding: 8 },
+  closeText: { color: '#ef4444', fontSize: 16, fontWeight: 'bold' },
+  
+  gridItem: {
+    flex: 1, margin: 5, height: 200, borderRadius: 10, overflow: 'hidden', position: 'relative', backgroundColor: '#374151'
   },
-  iconPlaceholder: {
-    alignSelf: 'center',
-    backgroundColor: '#dcfce7', // Verde muy suave
-    width: 120,
-    height: 120,
-    borderRadius: 60,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 32,
-    borderWidth: 2,
-    borderColor: '#15803d',
+  gridImage: { width: '100%', height: '100%', resizeMode: 'cover' },
+  deleteButton: {
+    position: 'absolute', top: 5, right: 5,
+    backgroundColor: 'rgba(239, 68, 68, 0.8)',
+    width: 24, height: 24, borderRadius: 12,
+    justifyContent: 'center', alignItems: 'center',
   },
-  iconText: {
-    fontSize: 50,
+  deleteText: { color: 'white', fontWeight: 'bold', fontSize: 12 },
+  
+  modalFooter: { padding: 20, borderTopWidth: 1, borderTopColor: '#374151', backgroundColor: '#1f2937' },
+  fullWidthButton: {
+    backgroundColor: '#3b82f6', // Azul para diferenciar de la cámara (o usa verde #15803d)
+    padding: 16, borderRadius: 12, alignItems: 'center',
   },
-  instructionsTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#334155',
-    marginBottom: 12,
-  },
-  instructionItem: {
-    flexDirection: 'row',
-    marginBottom: 8,
-    alignItems: 'flex-start',
-  },
-  bullet: {
-    fontSize: 18,
-    color: '#15803d',
-    marginRight: 8,
-    fontWeight: 'bold',
-  },
-  instructionText: {
-    fontSize: 16,
-    color: '#475569',
-    lineHeight: 24,
-  },
-  footer: {
-    padding: 24,
-    alignItems: 'center',
-  },
-  button: {
-    backgroundColor: '#15803d', // Verde principal
-    width: '100%',
-    paddingVertical: 18,
-    borderRadius: 12,
-    alignItems: 'center',
-    elevation: 3, // Sombra en Android
-    shadowColor: '#000', // Sombra en iOS
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-  },
-  buttonText: {
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: 'bold',
-    letterSpacing: 1,
-  },
-  versionText: {
-    marginTop: 16,
-    color: '#94a3b8',
-    fontSize: 12,
-  },
+  fullWidthButtonText: { color: 'white', fontSize: 16, fontWeight: 'bold', letterSpacing: 1 },
 });
 
 export default HomeScreen;
