@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(./gradlew clean:*)",
+      "Bash(npm install:*)",
+      "Bash(./gradlew app:assembleDebug:*)",
+      "Bash(npx react-native config:*)",
+      "Bash(echo:*)",
+      "Bash(cat:*)",
+      "Bash(./gradlew assembleDebug:*)",
+      "Bash($env:Path = $env:Path + \";$env:LOCALAPPDATA\\Android\\Sdk\\platform-tools\")",
+      "Bash(adb uninstall:*)",
+      "Bash(powershell -Command \"$env:Path = $env:Path + '';$env:LOCALAPPDATA\\Android\\Sdk\\platform-tools''; adb uninstall com.camoteapp\")",
+      "Bash(powershell -ExecutionPolicy Bypass -File complete-rebuild.ps1)",
+      "Bash(powershell -Command \"$env:Path = $env:Path + '';$env:LOCALAPPDATA\\Android\\Sdk\\platform-tools''; adb devices\")",
+      "Bash(powershell:*)"
+    ]
+  }
+}

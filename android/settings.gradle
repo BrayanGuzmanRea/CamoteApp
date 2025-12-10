@@ -1,6 +1,22 @@
-pluginManagement { includeBuild("../node_modules/@react-native/gradle-plugin") }
-plugins { id("com.facebook.react.settings") }
-extensions.configure(com.facebook.react.ReactSettingsExtension){ ex -> ex.autolinkLibrariesFromCommand() }
+pluginManagement {
+    // ESTA LÍNEA ES LA SOLUCIÓN: Le dice a Gradle dónde buscar el plugin de Facebook
+    includeBuild("../node_modules/@react-native/gradle-plugin")
+
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+
+plugins {
+    id("com.facebook.react.settings")
+}
+
+apply from: file("../node_modules/@react-native-community/cli-platform-android/native_modules.gradle")
+applyNativeModulesSettingsGradle(settings)
+
 rootProject.name = 'CamoteApp'
+
 include ':app'
 includeBuild('../node_modules/@react-native/gradle-plugin')
