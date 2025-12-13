@@ -7,19 +7,38 @@ import { analyzeImage, Detection } from '../utils/YoloService';
 type Props = NativeStackScreenProps<RootStackParamList, 'Results'>;
 
 const ResultsScreen = ({ route, navigation }: Props) => {
+  console.log('🟢 [ResultsScreen] Componente iniciado');
   const { photos, modelName } = route.params;
+  console.log(`🟢 [ResultsScreen] Parámetros recibidos - Photos: ${photos.length}, Model: ${modelName}`);
+
   const [results, setResults] = useState<{ uri: string; detections: Detection[] }[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    console.log('🟡 [ResultsScreen] useEffect ejecutado - Iniciando análisis');
     const run = async () => {
-      const res = [];
-      for (const uri of photos) {
-        const dets = await analyzeImage(uri, modelName);
-        res.push({ uri, detections: dets });
+      try {
+        console.log('🟡 [ResultsScreen] Función run() iniciada');
+        const res = [];
+
+        for (let i = 0; i < photos.length; i++) {
+          const uri = photos[i];
+          console.log(`🔵 [ResultsScreen] Analizando foto ${i + 1}/${photos.length}: ${uri}`);
+
+          const dets = await analyzeImage(uri, modelName);
+          console.log(`✅ [ResultsScreen] Foto ${i + 1} analizada - Detecciones: ${dets.length}`);
+
+          res.push({ uri, detections: dets });
+        }
+
+        console.log('✅ [ResultsScreen] Todas las fotos analizadas, actualizando estado');
+        setResults(res);
+        setLoading(false);
+        console.log('✅ [ResultsScreen] Estado actualizado, loading=false');
+      } catch (error) {
+        console.error('❌ [ResultsScreen] ERROR en run():', error);
+        setLoading(false);
       }
-      setResults(res);
-      setLoading(false);
     };
     run();
   }, []);

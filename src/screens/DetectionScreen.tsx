@@ -26,8 +26,14 @@ const DetectionScreen = () => {
   };
 
   const analyze = () => {
+    console.log('🟢 [DetectionScreen] Botón ANALIZAR presionado');
+    console.log(`🟢 [DetectionScreen] Fotos a analizar: ${photos.length}`);
+    console.log(`🟢 [DetectionScreen] Modelo seleccionado: ${modelName}`);
+
     setShowGallery(false);
+    console.log('🟢 [DetectionScreen] Navegando a ResultsScreen...');
     navigation.navigate('Results', { photos, modelName });
+    console.log('🟢 [DetectionScreen] Navegación iniciada');
   };
 
   return (

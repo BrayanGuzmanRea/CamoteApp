@@ -13,7 +13,10 @@
       "Bash(powershell -Command \"$env:Path = $env:Path + '';$env:LOCALAPPDATA\\Android\\Sdk\\platform-tools''; adb uninstall com.camoteapp\")",
       "Bash(powershell -ExecutionPolicy Bypass -File complete-rebuild.ps1)",
       "Bash(powershell -Command \"$env:Path = $env:Path + '';$env:LOCALAPPDATA\\Android\\Sdk\\platform-tools''; adb devices\")",
-      "Bash(powershell:*)"
+      "Bash(powershell:*)",
+      "Bash(unzip:*)",
+      "Bash(adb shell:*)",
+      "Bash(adb devices:*)"
     ]
   }
 }

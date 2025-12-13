@@ -12,11 +12,27 @@ const HomeScreen = ({ navigation }: Props) => {
   const [selectedModel, setSelectedModel] = useState<'yolov8' | 'yolov11'>('yolov11');
 
   const handleOpenGallery = async () => {
-    const result = await launchImageLibrary({ mediaType: 'photo', selectionLimit: 0, quality: 1 });
+    console.log('🖼️ [HomeScreen] Abriendo galería de fotos...');
+
+    const result = await launchImageLibrary({
+      mediaType: 'photo',
+      selectionLimit: 0,
+      quality: 0.8, // Reducir calidad para imágenes muy grandes
+      maxWidth: 4096, // Máximo ancho 4096px
+      maxHeight: 4096, // Máximo alto 4096px
+      includeBase64: false,
+    });
+
     if (result.assets && result.assets.length > 0) {
+      console.log(`✅ [HomeScreen] ${result.assets.length} fotos seleccionadas`);
+
       const uris = result.assets.map(a => a.uri).filter((u): u is string => !!u);
+      console.log('📸 [HomeScreen] URIs procesadas:', uris);
+
       setSelectedPhotos(uris);
       setShowModal(true);
+    } else {
+      console.log('⚠️ [HomeScreen] No se seleccionaron fotos');
     }
   };
 
@@ -89,12 +105,23 @@ const HomeScreen = ({ navigation }: Props) => {
       <Modal visible={showModal} animationType="slide">
         <View style={styles.modalBg}>
           <Text style={styles.modalTitle}>Galería ({selectedPhotos.length})</Text>
-          <FlatList 
+          <FlatList
             data={selectedPhotos}
             numColumns={2}
+            keyExtractor={(item, index) => `photo-${index}`}
             renderItem={({ item }) => (
               <View style={styles.gridItem}>
-                <Image source={{ uri: item }} style={{ flex: 1 }} />
+                <Image
+                  source={{ uri: item }}
+                  style={{ flex: 1 }}
+                  resizeMode="cover"
+                  onError={(error) => {
+                    console.error('❌ [HomeScreen] Error cargando imagen:', item, error.nativeEvent);
+                  }}
+                  onLoad={() => {
+                    console.log('✅ [HomeScreen] Imagen cargada:', item);
+                  }}
+                />
                 <TouchableOpacity style={styles.delBtn} onPress={() => removePhoto(item)}><Text>✕</Text></TouchableOpacity>
               </View>
             )}
