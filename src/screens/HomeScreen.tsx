@@ -1,257 +1,135 @@
 import React, { useState } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-  SafeAreaView,
-  StatusBar,
-  ScrollView,
-  Alert,
-  Modal,
-  FlatList,
-  Image,
-} from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, SafeAreaView, StatusBar, ScrollView, Alert, Modal, FlatList, Image } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { launchImageLibrary, Asset } from 'react-native-image-picker';
-
-type RootStackParamList = {
-  Home: undefined;
-  Detection: undefined;
-};
+import { launchImageLibrary } from 'react-native-image-picker';
+import { RootStackParamList } from '../../App';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Home'>;
 
 const HomeScreen = ({ navigation }: Props) => {
-  
-  // --- ESTADOS ---
   const [selectedPhotos, setSelectedPhotos] = useState<string[]>([]);
   const [showModal, setShowModal] = useState(false);
+  const [selectedModel, setSelectedModel] = useState<'yolov8' | 'yolov11'>('yolov11');
 
-  // --- FUNCIÓN: ABRIR GALERÍA ---
   const handleOpenGallery = async () => {
-    try {
-      const result = await launchImageLibrary({
-        mediaType: 'photo',
-        selectionLimit: 0, // 0 = Múltiples fotos
-        quality: 1,
-      });
-
-      if (result.didCancel) return;
-
-      if (result.errorCode) {
-        Alert.alert('Error', result.errorMessage);
-        return;
-      }
-
-      if (result.assets && result.assets.length > 0) {
-        // Extraemos solo las URIs (rutas) de las fotos
-        // Filtramos para asegurar que no haya nulos
-        const uris = result.assets
-          .map(asset => asset.uri)
-          .filter((uri): uri is string => !!uri);
-        
-        setSelectedPhotos(uris);
-        setShowModal(true); // <--- ABRIMOS EL RESUMEN
-      }
-    } catch (error) {
-      console.error(error);
-      Alert.alert('Error', 'No se pudo abrir la galería');
+    const result = await launchImageLibrary({ mediaType: 'photo', selectionLimit: 0, quality: 1 });
+    if (result.assets && result.assets.length > 0) {
+      const uris = result.assets.map(a => a.uri).filter((u): u is string => !!u);
+      setSelectedPhotos(uris);
+      setShowModal(true);
     }
   };
 
-  // --- FUNCIÓN: ELIMINAR FOTO DEL RESUMEN ---
-  const removePhoto = (uriToRemove: string) => {
-    const updatedList = selectedPhotos.filter(uri => uri !== uriToRemove);
-    setSelectedPhotos(updatedList);
-    // Si borra todas, cerramos el modal automáticamente
-    if (updatedList.length === 0) setShowModal(false);
+  const removePhoto = (uri: string) => {
+    const list = selectedPhotos.filter(p => p !== uri);
+    setSelectedPhotos(list);
+    if (list.length === 0) setShowModal(false);
   };
 
-  // --- FUNCIÓN: PROCESAR (Mandar a IA) ---
   const handleAnalyzeGallery = () => {
     setShowModal(false);
-    console.log("Enviando fotos de galería a procesar:", selectedPhotos);
-    Alert.alert("Procesando", `Analizando ${selectedPhotos.length} imágenes...`);
-    // AQUÍ CONECTAREMOS CON LA LÓGICA DE RECORTE (TILING) EN LA FASE 3
+    navigation.navigate('Results', { photos: selectedPhotos, modelName: selectedModel });
   };
-
-  // --- RENDER ITEM (CADA FOTO EN EL MODAL) ---
-  const renderGalleryItem = ({ item }: { item: string }) => (
-    <View style={styles.gridItem}>
-      <Image source={{ uri: item }} style={styles.gridImage} />
-      <TouchableOpacity 
-        style={styles.deleteButton} 
-        onPress={() => removePhoto(item)}
-      >
-        <Text style={styles.deleteText}>✕</Text>
-      </TouchableOpacity>
-    </View>
-  );
 
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="#f0fdf4" />
-      <ScrollView contentContainerStyle={styles.scrollContent}>
-        
-        {/* Encabezado */}
+      <ScrollView contentContainerStyle={{ paddingBottom: 30 }}>
+        {/* Header */}
         <View style={styles.header}>
-          <Text style={styles.uniText}>Universidad Señor de Sipán</Text>
-          <Text style={styles.thesisTitle}>Detección de Gusano Minador</Text>
-          <View style={styles.badge}>
-            <Text style={styles.badgeText}>Offline v0.0.1</Text>
+          <Text style={styles.title}>Detección de Gusano Minador</Text>
+          <View style={styles.badge}><Text style={styles.badgeText}>Offline v0.0.2</Text></View>
+        </View>
+
+        {/* Selector de Modelo */}
+        <View style={styles.section}>
+          <Text style={styles.label}>Motor de Inteligencia Artificial:</Text>
+          <View style={styles.row}>
+            {['yolov8', 'yolov11'].map((m) => (
+              <TouchableOpacity
+                key={m}
+                style={[styles.modelBtn, selectedModel === m && styles.modelBtnActive]}
+                onPress={() => setSelectedModel(m as any)}
+              >
+                <Text style={[styles.modelTxt, selectedModel === m && styles.modelTxtActive]}>
+                  {m.toUpperCase()}
+                </Text>
+              </TouchableOpacity>
+            ))}
           </View>
         </View>
 
-        {/* Bienvenida */}
-        <View style={styles.introSection}>
-          <Text style={styles.welcomeText}>Hola, Agricultor 👋</Text>
-          <Text style={styles.subText}>Selecciona una opción para comenzar el diagnóstico.</Text>
-        </View>
-
-        {/* Botones Principales */}
-        <View style={styles.actionsContainer}>
-          {/* CÁMARA */}
+        {/* Botones */}
+        <View style={styles.section}>
           <TouchableOpacity 
-            style={[styles.cardButton, styles.cameraCard]}
-            onPress={() => navigation.navigate('Detection')}
-            activeOpacity={0.8}
+            style={[styles.card, { borderLeftColor: '#15803d' }]}
+            onPress={() => navigation.navigate('Detection', { modelName: selectedModel })}
           >
-            <View style={styles.iconCircle}>
-              <Text style={styles.emoji}>📷</Text>
-            </View>
-            <View style={styles.textContainer}>
+            <Text style={styles.emoji}>📷</Text>
+            <View>
               <Text style={styles.cardTitle}>Nueva Captura</Text>
-              <Text style={styles.cardDesc}>Usar la cámara en campo.</Text>
+              <Text style={styles.cardSub}>Usar cámara con {selectedModel.toUpperCase()}</Text>
             </View>
           </TouchableOpacity>
 
-          {/* GALERÍA */}
           <TouchableOpacity 
-            style={[styles.cardButton, styles.galleryCard]}
+            style={[styles.card, { borderLeftColor: '#3b82f6' }]}
             onPress={handleOpenGallery}
-            activeOpacity={0.8}
           >
-            <View style={[styles.iconCircle, styles.galleryIcon]}>
-              <Text style={styles.emoji}>🖼️</Text>
-            </View>
-            <View style={styles.textContainer}>
+            <Text style={styles.emoji}>🖼️</Text>
+            <View>
               <Text style={styles.cardTitle}>Cargar Fotos</Text>
-              <Text style={styles.cardDesc}>Seleccionar de la galería.</Text>
+              <Text style={styles.cardSub}>Desde galería con {selectedModel.toUpperCase()}</Text>
             </View>
           </TouchableOpacity>
         </View>
-
-        {/* Info Box */}
-        <View style={styles.infoBox}>
-          <Text style={styles.infoTitle}>💡 Recuerda:</Text>
-          <Text style={styles.infoText}>Asegúrate de que las fotos estén bien enfocadas y a 45cm de distancia.</Text>
-        </View>
-
       </ScrollView>
 
-      {/* --- MODAL DE RESUMEN (Igual al de la Cámara) --- */}
-      <Modal
-        animationType="slide"
-        transparent={false}
-        visible={showModal}
-        onRequestClose={() => setShowModal(false)}
-      >
-        <View style={styles.modalContainer}>
-          {/* Cabecera Modal */}
-          <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Galería Seleccionada ({selectedPhotos.length})</Text>
-            <TouchableOpacity onPress={() => setShowModal(false)} style={styles.closeButton}>
-              <Text style={styles.closeText}>Cancelar</Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* Lista de Fotos */}
-          <FlatList
+      {/* Modal Galería */}
+      <Modal visible={showModal} animationType="slide">
+        <View style={styles.modalBg}>
+          <Text style={styles.modalTitle}>Galería ({selectedPhotos.length})</Text>
+          <FlatList 
             data={selectedPhotos}
-            renderItem={renderGalleryItem}
-            keyExtractor={(item, index) => item + index}
             numColumns={2}
-            contentContainerStyle={{ padding: 10 }}
+            renderItem={({ item }) => (
+              <View style={styles.gridItem}>
+                <Image source={{ uri: item }} style={{ flex: 1 }} />
+                <TouchableOpacity style={styles.delBtn} onPress={() => removePhoto(item)}><Text>✕</Text></TouchableOpacity>
+              </View>
+            )}
           />
-
-          {/* Botón de Acción */}
-          <View style={styles.modalFooter}>
-            <TouchableOpacity style={styles.fullWidthButton} onPress={handleAnalyzeGallery}>
-              <Text style={styles.fullWidthButtonText}>CONFIRMAR Y ANALIZAR</Text>
-            </TouchableOpacity>
-          </View>
+          <TouchableOpacity style={styles.confirmBtn} onPress={handleAnalyzeGallery}>
+            <Text style={{ color: 'white', fontWeight: 'bold' }}>ANALIZAR AHORA</Text>
+          </TouchableOpacity>
         </View>
       </Modal>
-
     </SafeAreaView>
   );
 };
 
 const styles = StyleSheet.create({
-  // --- ESTILOS PRINCIPALES ---
   container: { flex: 1, backgroundColor: '#f8fafc' },
-  scrollContent: { paddingBottom: 30 },
-  header: {
-    backgroundColor: '#ffffff', padding: 24, borderBottomWidth: 1, borderBottomColor: '#e2e8f0', alignItems: 'center',
-  },
-  uniText: { fontSize: 12, color: '#64748b', fontWeight: '700', textTransform: 'uppercase', marginBottom: 4 },
-  thesisTitle: { fontSize: 20, fontWeight: '800', color: '#0f172a', textAlign: 'center', marginBottom: 8 },
-  badge: { backgroundColor: '#dcfce7', paddingHorizontal: 10, paddingVertical: 2, borderRadius: 12 },
-  badgeText: { color: '#166534', fontSize: 10, fontWeight: '700' },
-  introSection: { padding: 24 },
-  welcomeText: { fontSize: 28, fontWeight: 'bold', color: '#1e293b', marginBottom: 8 },
-  subText: { fontSize: 16, color: '#64748b', lineHeight: 24 },
-  actionsContainer: { paddingHorizontal: 20 },
-  
-  // Tarjetas
-  cardButton: {
-    flexDirection: 'row', backgroundColor: 'white', padding: 20, borderRadius: 20, marginBottom: 16, alignItems: 'center',
-    elevation: 4, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.1, shadowRadius: 10,
-  },
-  cameraCard: { borderLeftWidth: 6, borderLeftColor: '#15803d' },
-  galleryCard: { borderLeftWidth: 6, borderLeftColor: '#3b82f6' },
-  iconCircle: { width: 60, height: 60, borderRadius: 30, backgroundColor: '#dcfce7', justifyContent: 'center', alignItems: 'center', marginRight: 16 },
-  galleryIcon: { backgroundColor: '#dbeafe' },
-  emoji: { fontSize: 28 },
-  textContainer: { flex: 1 },
-  cardTitle: { fontSize: 18, fontWeight: 'bold', color: '#1e293b', marginBottom: 4 },
-  cardDesc: { fontSize: 14, color: '#64748b', lineHeight: 20 },
-  
-  infoBox: {
-    margin: 20, padding: 16, backgroundColor: '#fffbeb', borderRadius: 12, borderWidth: 1, borderColor: '#fcd34d',
-  },
-  infoTitle: { fontWeight: 'bold', color: '#b45309', marginBottom: 4 },
-  infoText: { color: '#b45309', fontSize: 13 },
-
-  // --- ESTILOS DEL MODAL (Igual a DetectionScreen) ---
-  modalContainer: { flex: 1, backgroundColor: '#111827' }, // Fondo oscuro
-  modalHeader: {
-    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-    padding: 20, borderBottomWidth: 1, borderBottomColor: '#374151', backgroundColor: '#1f2937',
-  },
-  modalTitle: { color: 'white', fontSize: 18, fontWeight: 'bold' },
-  closeButton: { padding: 8 },
-  closeText: { color: '#ef4444', fontSize: 16, fontWeight: 'bold' },
-  
-  gridItem: {
-    flex: 1, margin: 5, height: 200, borderRadius: 10, overflow: 'hidden', position: 'relative', backgroundColor: '#374151'
-  },
-  gridImage: { width: '100%', height: '100%', resizeMode: 'cover' },
-  deleteButton: {
-    position: 'absolute', top: 5, right: 5,
-    backgroundColor: 'rgba(239, 68, 68, 0.8)',
-    width: 24, height: 24, borderRadius: 12,
-    justifyContent: 'center', alignItems: 'center',
-  },
-  deleteText: { color: 'white', fontWeight: 'bold', fontSize: 12 },
-  
-  modalFooter: { padding: 20, borderTopWidth: 1, borderTopColor: '#374151', backgroundColor: '#1f2937' },
-  fullWidthButton: {
-    backgroundColor: '#3b82f6', // Azul para diferenciar de la cámara (o usa verde #15803d)
-    padding: 16, borderRadius: 12, alignItems: 'center',
-  },
-  fullWidthButtonText: { color: 'white', fontSize: 16, fontWeight: 'bold', letterSpacing: 1 },
+  header: { padding: 20, alignItems: 'center', backgroundColor: 'white' },
+  title: { fontSize: 20, fontWeight: 'bold', color: '#0f172a' },
+  badge: { backgroundColor: '#dcfce7', padding: 4, borderRadius: 8, marginTop: 5 },
+  badgeText: { color: '#166534', fontWeight: 'bold', fontSize: 10 },
+  section: { padding: 20 },
+  label: { marginBottom: 10, fontWeight: 'bold', color: '#64748b' },
+  row: { flexDirection: 'row', gap: 10 },
+  modelBtn: { flex: 1, padding: 15, borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 10, alignItems: 'center', backgroundColor: 'white' },
+  modelBtnActive: { borderColor: '#15803d', backgroundColor: '#f0fdf4' },
+  modelTxt: { fontWeight: '600', color: '#64748b' },
+  modelTxtActive: { color: '#15803d', fontWeight: 'bold' },
+  card: { flexDirection: 'row', padding: 20, backgroundColor: 'white', borderRadius: 15, marginBottom: 15, elevation: 3, borderLeftWidth: 5, alignItems: 'center', gap: 15 },
+  emoji: { fontSize: 30 },
+  cardTitle: { fontSize: 18, fontWeight: 'bold', color: '#1e293b' },
+  cardSub: { color: '#64748b' },
+  modalBg: { flex: 1, backgroundColor: '#111827', padding: 20 },
+  modalTitle: { color: 'white', fontSize: 20, fontWeight: 'bold', marginBottom: 20 },
+  gridItem: { flex: 1, height: 200, margin: 5, borderRadius: 10, overflow: 'hidden' },
+  delBtn: { position: 'absolute', right: 5, top: 5, backgroundColor: 'red', width: 25, height: 25, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
+  confirmBtn: { backgroundColor: '#15803d', padding: 15, borderRadius: 10, alignItems: 'center', marginTop: 10 }
 });
 
 export default HomeScreen;
