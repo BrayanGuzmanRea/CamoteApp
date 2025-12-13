@@ -1,5 +1,20 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, SafeAreaView, StatusBar, ScrollView, Alert, Modal, FlatList, Image } from 'react-native';
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  SafeAreaView,
+  StatusBar,
+  ScrollView,
+  Alert,
+  Modal,
+  FlatList,
+  Image,
+  Platform,
+  PermissionsAndroid,
+  Linking, // <--- IMPORTANTE: Agregado para abrir configuración si se requiere
+} from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { launchImageLibrary } from 'react-native-image-picker';
 import { RootStackParamList } from '../../App';
@@ -11,28 +26,86 @@ const HomeScreen = ({ navigation }: Props) => {
   const [showModal, setShowModal] = useState(false);
   const [selectedModel, setSelectedModel] = useState<'yolov8' | 'yolov11'>('yolov11');
 
+  // --- 1. LÓGICA DE PERMISOS ---
+  const checkGalleryPermission = async () => {
+    if (Platform.OS === 'android') {
+      // Android 13+ (SDK 33)
+      if (Platform.Version >= 33) {
+        const granted = await PermissionsAndroid.request(
+          PermissionsAndroid.PERMISSIONS.READ_MEDIA_IMAGES
+        );
+        return granted === PermissionsAndroid.RESULTS.GRANTED;
+      } 
+      // Android 12 o inferior
+      else {
+        const granted = await PermissionsAndroid.request(
+          PermissionsAndroid.PERMISSIONS.READ_EXTERNAL_STORAGE
+        );
+        return granted === PermissionsAndroid.RESULTS.GRANTED;
+      }
+    }
+    return true; // iOS
+  };
+
+  // --- 2. FUNCIÓN PARA ABRIR GALERÍA (MODIFICADA PARA 50MP) ---
   const handleOpenGallery = async () => {
-    console.log('🖼️ [HomeScreen] Abriendo galería de fotos...');
+    // A. Verificar permiso
+    const hasPermission = await checkGalleryPermission();
+    if (!hasPermission) {
+      Alert.alert(
+        "Acceso Limitado",
+        "Para ver las fotos de alta resolución, necesitas dar permiso total a la galería.",
+        [
+          { text: "Cancelar", style: "cancel" },
+          { text: "Ir a Configuración", onPress: () => Linking.openSettings() }
+        ]
+      );
+      return;
+    }
 
-    const result = await launchImageLibrary({
-      mediaType: 'photo',
-      selectionLimit: 0,
-      quality: 0.8, // Reducir calidad para imágenes muy grandes
-      maxWidth: 4096, // Máximo ancho 4096px
-      maxHeight: 4096, // Máximo alto 4096px
-      includeBase64: false,
-    });
+    // B. Abrir Selector con configuración "Agresiva"
+    try {
+      const result = await launchImageLibrary({
+        mediaType: 'mixed', // <--- CAMBIO CLAVE: 'mixed' fuerza a mostrar todos los archivos (incluyendo HEIC/RAW/Alta Res)
+        selectionLimit: 0,  // Sin límite
+        quality: 1,         // Calidad original
+        includeExtra: true, // Metadatos extra
+        presentationStyle: 'fullScreen',
+      });
 
-    if (result.assets && result.assets.length > 0) {
-      console.log(`✅ [HomeScreen] ${result.assets.length} fotos seleccionadas`);
+      if (result.didCancel) return;
 
-      const uris = result.assets.map(a => a.uri).filter((u): u is string => !!u);
-      console.log('📸 [HomeScreen] URIs procesadas:', uris);
+      if (result.errorCode) {
+        if (result.errorCode === 'permission') {
+          Alert.alert("Error", "Permiso denegado por el sistema.");
+        } else {
+          Alert.alert('Error', result.errorMessage);
+        }
+        return;
+      }
 
-      setSelectedPhotos(uris);
-      setShowModal(true);
-    } else {
-      console.log('⚠️ [HomeScreen] No se seleccionaron fotos');
+      if (result.assets && result.assets.length > 0) {
+        // Filtramos para asegurarnos de que sean imágenes (ya que 'mixed' puede traer videos)
+        const photoAssets = result.assets.filter(a => a.type?.includes('image'));
+        
+        const uris = photoAssets
+          .map(asset => asset.uri)
+          .filter((uri): uri is string => !!uri);
+        
+        // Log para depuración
+        photoAssets.forEach(a => console.log(`📸 Imagen cargada: ${a.width}x${a.height} px | Tipo: ${a.type}`));
+
+        if (uris.length === 0) {
+           Alert.alert("Aviso", "No se seleccionaron imágenes válidas.");
+           return;
+        }
+
+        setSelectedPhotos(uris);
+        setShowModal(true);
+      }
+    } catch (error) {
+      console.error(error);
+      Alert.alert('Error', 'No se pudo abrir la galería');
     }
   };
 
@@ -47,6 +120,7 @@ const HomeScreen = ({ navigation }: Props) => {
     navigation.navigate('Results', { photos: selectedPhotos, modelName: selectedModel });
   };
 
+  // --- RENDERIZADO ---
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="#f0fdf4" />
@@ -54,7 +128,7 @@ const HomeScreen = ({ navigation }: Props) => {
         {/* Header */}
         <View style={styles.header}>
           <Text style={styles.title}>Detección de Gusano Minador</Text>
-          <View style={styles.badge}><Text style={styles.badgeText}>Offline v0.0.2</Text></View>
+          <View style={styles.badge}><Text style={styles.badgeText}>Offline v0.0.3</Text></View>
         </View>
 
         {/* Selector de Modelo */}
@@ -95,7 +169,7 @@ const HomeScreen = ({ navigation }: Props) => {
             <Text style={styles.emoji}>🖼️</Text>
             <View>
               <Text style={styles.cardTitle}>Cargar Fotos</Text>
-              <Text style={styles.cardSub}>Desde galería con {selectedModel.toUpperCase()}</Text>
+              <Text style={styles.cardSub}>Originales (50MP) con {selectedModel.toUpperCase()}</Text>
             </View>
           </TouchableOpacity>
         </View>
@@ -105,23 +179,12 @@ const HomeScreen = ({ navigation }: Props) => {
       <Modal visible={showModal} animationType="slide">
         <View style={styles.modalBg}>
           <Text style={styles.modalTitle}>Galería ({selectedPhotos.length})</Text>
-          <FlatList
+          <FlatList 
             data={selectedPhotos}
             numColumns={2}
-            keyExtractor={(item, index) => `photo-${index}`}
             renderItem={({ item }) => (
               <View style={styles.gridItem}>
-                <Image
-                  source={{ uri: item }}
-                  style={{ flex: 1 }}
-                  resizeMode="cover"
-                  onError={(error) => {
-                    console.error('❌ [HomeScreen] Error cargando imagen:', item, error.nativeEvent);
-                  }}
-                  onLoad={() => {
-                    console.log('✅ [HomeScreen] Imagen cargada:', item);
-                  }}
-                />
+                <Image source={{ uri: item }} style={{ flex: 1 }} />
                 <TouchableOpacity style={styles.delBtn} onPress={() => removePhoto(item)}><Text>✕</Text></TouchableOpacity>
               </View>
             )}
