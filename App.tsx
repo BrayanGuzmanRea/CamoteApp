@@ -6,10 +6,18 @@ import HomeScreen from './src/screens/HomeScreen';
 import DetectionScreen from './src/screens/DetectionScreen';
 import ResultsScreen from './src/screens/ResultsScreen';
 
+// --- NUEVA INTERFAZ PARA LAS FOTOS ---
+export interface PhotoAsset {
+  uri: string;
+  width: number;
+  height: number;
+}
+
 export type RootStackParamList = {
   Home: undefined;
   Detection: { modelName: 'yolov8' | 'yolov11' };
-  Results: { photos: string[]; modelName: 'yolov8' | 'yolov11' };
+  // Ahora pasamos objetos completos, no solo strings
+  Results: { photos: PhotoAsset[]; modelName: 'yolov8' | 'yolov11' };
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();

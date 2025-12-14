@@ -1,8 +1,8 @@
 import React, { useState, useRef } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Alert, Modal, FlatList, Image } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Modal, FlatList, Image } from 'react-native';
 import { Camera, useCameraDevice, useCameraPermission } from 'react-native-vision-camera';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
-import { RootStackParamList } from '../../App';
+import { RootStackParamList, PhotoAsset } from '../../App';
 
 const DetectionScreen = () => {
   const navigation = useNavigation<any>();
@@ -16,7 +16,7 @@ const DetectionScreen = () => {
   const [showGallery, setShowGallery] = useState(false);
 
   if (!hasPermission) requestPermission();
-  if (!device) return <Text>Cargando...</Text>;
+  if (!device) return <Text>Cargando Cámara...</Text>;
 
   const takePhoto = async () => {
     if (camera.current) {
@@ -25,25 +25,26 @@ const DetectionScreen = () => {
     }
   };
 
-  const analyze = () => {
-    console.log('🟢 [DetectionScreen] Botón ANALIZAR presionado');
-    console.log(`🟢 [DetectionScreen] Fotos a analizar: ${photos.length}`);
-    console.log(`🟢 [DetectionScreen] Modelo seleccionado: ${modelName}`);
-
+  const analyze = async () => {
     setShowGallery(false);
-    console.log('🟢 [DetectionScreen] Navegando a ResultsScreen...');
-    navigation.navigate('Results', { photos, modelName });
-    console.log('🟢 [DetectionScreen] Navegación iniciada');
+    
+    // Convertimos URIs a PhotoAssets calculando dimensiones
+    // Esto es rápido porque son pocas fotos
+    const assetsPromises = photos.map(uri => new Promise<PhotoAsset | null>((resolve) => {
+        Image.getSize(uri, (width, height) => {
+            resolve({ uri, width, height });
+        }, () => resolve(null));
+    }));
+
+    const validAssets = (await Promise.all(assetsPromises)).filter((a): a is PhotoAsset => a !== null);
+
+    navigation.navigate('Results', { photos: validAssets, modelName });
   };
 
   return (
     <View style={{ flex: 1, backgroundColor: 'black' }}>
-      <Camera 
-        ref={camera} style={StyleSheet.absoluteFill} 
-        device={device} isActive={!showGallery} photo={true} 
-      />
+      <Camera ref={camera} style={StyleSheet.absoluteFill} device={device} isActive={!showGallery} photo={true} />
       
-      {/* UI Simple */}
       <View style={styles.ui}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.btnSmall}><Text style={styles.txt}>Salir</Text></TouchableOpacity>
         <TouchableOpacity onPress={() => setShowGallery(true)} style={styles.btnSmall}><Text style={styles.txt}>{photos.length} 📸</Text></TouchableOpacity>
@@ -57,7 +58,6 @@ const DetectionScreen = () => {
         </TouchableOpacity>
       )}
 
-      {/* Modal Rápido */}
       <Modal visible={showGallery} animationType="slide">
         <View style={{ flex: 1, backgroundColor: '#111' }}>
           <FlatList 

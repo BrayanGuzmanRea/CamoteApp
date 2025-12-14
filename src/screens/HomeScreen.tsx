@@ -1,106 +1,56 @@
 import React, { useState } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-  SafeAreaView,
-  StatusBar,
-  ScrollView,
-  Alert,
-  Modal,
-  FlatList,
-  Image,
-  Platform,
-  PermissionsAndroid,
-  Linking, // <--- IMPORTANTE: Agregado para abrir configuración si se requiere
-} from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, SafeAreaView, StatusBar, ScrollView, Alert, Modal, FlatList, Image, Platform, PermissionsAndroid, Linking } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { launchImageLibrary } from 'react-native-image-picker';
-import { RootStackParamList } from '../../App';
+import { RootStackParamList, PhotoAsset } from '../../App'; // Importamos PhotoAsset
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Home'>;
 
 const HomeScreen = ({ navigation }: Props) => {
-  const [selectedPhotos, setSelectedPhotos] = useState<string[]>([]);
+  // CAMBIO: Estado guarda objetos PhotoAsset
+  const [selectedPhotos, setSelectedPhotos] = useState<PhotoAsset[]>([]);
   const [showModal, setShowModal] = useState(false);
   const [selectedModel, setSelectedModel] = useState<'yolov8' | 'yolov11'>('yolov11');
 
-  // --- 1. LÓGICA DE PERMISOS ---
   const checkGalleryPermission = async () => {
     if (Platform.OS === 'android') {
-      // Android 13+ (SDK 33)
       if (Platform.Version >= 33) {
-        const granted = await PermissionsAndroid.request(
-          PermissionsAndroid.PERMISSIONS.READ_MEDIA_IMAGES
-        );
+        const granted = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.READ_MEDIA_IMAGES);
         return granted === PermissionsAndroid.RESULTS.GRANTED;
-      } 
-      // Android 12 o inferior
-      else {
-        const granted = await PermissionsAndroid.request(
-          PermissionsAndroid.PERMISSIONS.READ_EXTERNAL_STORAGE
-        );
+      } else {
+        const granted = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.READ_EXTERNAL_STORAGE);
         return granted === PermissionsAndroid.RESULTS.GRANTED;
       }
     }
-    return true; // iOS
+    return true;
   };
 
-  // --- 2. FUNCIÓN PARA ABRIR GALERÍA (MODIFICADA PARA 50MP) ---
   const handleOpenGallery = async () => {
-    // A. Verificar permiso
     const hasPermission = await checkGalleryPermission();
     if (!hasPermission) {
-      Alert.alert(
-        "Acceso Limitado",
-        "Para ver las fotos de alta resolución, necesitas dar permiso total a la galería.",
-        [
-          { text: "Cancelar", style: "cancel" },
-          { text: "Ir a Configuración", onPress: () => Linking.openSettings() }
-        ]
-      );
+      Alert.alert("Permiso Requerido", "Habilita 'Permitir Todo' en configuración.", [{ text: "Configurar", onPress: () => Linking.openSettings() }, { text: "Cancelar" }]);
       return;
     }
 
-    // B. Abrir Selector con configuración "Agresiva"
     try {
       const result = await launchImageLibrary({
-        mediaType: 'mixed', // <--- CAMBIO CLAVE: 'mixed' fuerza a mostrar todos los archivos (incluyendo HEIC/RAW/Alta Res)
-        selectionLimit: 0,  // Sin límite
-        quality: 1,         // Calidad original
-        includeExtra: true, // Metadatos extra
-        presentationStyle: 'fullScreen',
+        mediaType: 'mixed', // Ver todo (50MP)
+        selectionLimit: 0,
+        quality: 1,
+        includeExtra: true,
       });
 
-      if (result.didCancel) return;
-
-      if (result.errorCode) {
-        if (result.errorCode === 'permission') {
-          Alert.alert("Error", "Permiso denegado por el sistema.");
-        } else {
-          Alert.alert('Error', result.errorMessage);
-        }
-        return;
-      }
-
       if (result.assets && result.assets.length > 0) {
-        // Filtramos para asegurarnos de que sean imágenes (ya que 'mixed' puede traer videos)
-        const photoAssets = result.assets.filter(a => a.type?.includes('image'));
+        // Mapeamos a PhotoAsset con dimensiones
+        const validAssets: PhotoAsset[] = result.assets
+          .filter(a => a.uri && a.width && a.height)
+          .map(a => ({
+            uri: a.uri!,
+            width: a.width!,
+            height: a.height!
+          }));
         
-        const uris = photoAssets
-          .map(asset => asset.uri)
-          .filter((uri): uri is string => !!uri);
-        
-        // Log para depuración
-        photoAssets.forEach(a => console.log(`📸 Imagen cargada: ${a.width}x${a.height} px | Tipo: ${a.type}`));
-
-        if (uris.length === 0) {
-           Alert.alert("Aviso", "No se seleccionaron imágenes válidas.");
-           return;
-        }
-
-        setSelectedPhotos(uris);
+        setSelectedPhotos(validAssets);
         setShowModal(true);
       }
     } catch (error) {
@@ -110,82 +60,64 @@ const HomeScreen = ({ navigation }: Props) => {
   };
 
   const removePhoto = (uri: string) => {
-    const list = selectedPhotos.filter(p => p !== uri);
+    const list = selectedPhotos.filter(p => p.uri !== uri);
     setSelectedPhotos(list);
     if (list.length === 0) setShowModal(false);
   };
 
   const handleAnalyzeGallery = () => {
+    console.log('🟢 [HomeScreen] Botón ANALIZAR presionado');
+    console.log(`🟢 [HomeScreen] Fotos a analizar: ${selectedPhotos.length}`);
+    console.log(`🟢 [HomeScreen] Modelo seleccionado: ${selectedModel}`);
+    console.log('🟢 [HomeScreen] Datos de fotos:', JSON.stringify(selectedPhotos));
+
     setShowModal(false);
+    console.log('🟢 [HomeScreen] Navegando a ResultsScreen...');
     navigation.navigate('Results', { photos: selectedPhotos, modelName: selectedModel });
+    console.log('🟢 [HomeScreen] Navegación iniciada');
   };
 
-  // --- RENDERIZADO ---
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="#f0fdf4" />
       <ScrollView contentContainerStyle={{ paddingBottom: 30 }}>
-        {/* Header */}
         <View style={styles.header}>
           <Text style={styles.title}>Detección de Gusano Minador</Text>
-          <View style={styles.badge}><Text style={styles.badgeText}>Offline v0.0.3</Text></View>
+          <View style={styles.badge}><Text style={styles.badgeText}>Offline v0.0.4</Text></View>
         </View>
 
-        {/* Selector de Modelo */}
         <View style={styles.section}>
-          <Text style={styles.label}>Motor de Inteligencia Artificial:</Text>
+          <Text style={styles.label}>Modelo IA:</Text>
           <View style={styles.row}>
             {['yolov8', 'yolov11'].map((m) => (
-              <TouchableOpacity
-                key={m}
-                style={[styles.modelBtn, selectedModel === m && styles.modelBtnActive]}
-                onPress={() => setSelectedModel(m as any)}
-              >
-                <Text style={[styles.modelTxt, selectedModel === m && styles.modelTxtActive]}>
-                  {m.toUpperCase()}
-                </Text>
+              <TouchableOpacity key={m} style={[styles.modelBtn, selectedModel === m && styles.modelBtnActive]} onPress={() => setSelectedModel(m as any)}>
+                <Text style={[styles.modelTxt, selectedModel === m && styles.modelTxtActive]}>{m.toUpperCase()}</Text>
               </TouchableOpacity>
             ))}
           </View>
         </View>
 
-        {/* Botones */}
         <View style={styles.section}>
-          <TouchableOpacity 
-            style={[styles.card, { borderLeftColor: '#15803d' }]}
-            onPress={() => navigation.navigate('Detection', { modelName: selectedModel })}
-          >
+          <TouchableOpacity style={[styles.card, { borderLeftColor: '#15803d' }]} onPress={() => navigation.navigate('Detection', { modelName: selectedModel })}>
             <Text style={styles.emoji}>📷</Text>
-            <View>
-              <Text style={styles.cardTitle}>Nueva Captura</Text>
-              <Text style={styles.cardSub}>Usar cámara con {selectedModel.toUpperCase()}</Text>
-            </View>
+            <View><Text style={styles.cardTitle}>Nueva Captura</Text><Text style={styles.cardSub}>Usar cámara</Text></View>
           </TouchableOpacity>
-
-          <TouchableOpacity 
-            style={[styles.card, { borderLeftColor: '#3b82f6' }]}
-            onPress={handleOpenGallery}
-          >
+          <TouchableOpacity style={[styles.card, { borderLeftColor: '#3b82f6' }]} onPress={handleOpenGallery}>
             <Text style={styles.emoji}>🖼️</Text>
-            <View>
-              <Text style={styles.cardTitle}>Cargar Fotos</Text>
-              <Text style={styles.cardSub}>Originales (50MP) con {selectedModel.toUpperCase()}</Text>
-            </View>
+            <View><Text style={styles.cardTitle}>Cargar Fotos</Text><Text style={styles.cardSub}>Galería (50MP)</Text></View>
           </TouchableOpacity>
         </View>
       </ScrollView>
 
-      {/* Modal Galería */}
       <Modal visible={showModal} animationType="slide">
         <View style={styles.modalBg}>
           <Text style={styles.modalTitle}>Galería ({selectedPhotos.length})</Text>
           <FlatList 
-            data={selectedPhotos}
-            numColumns={2}
+            data={selectedPhotos} numColumns={2}
             renderItem={({ item }) => (
               <View style={styles.gridItem}>
-                <Image source={{ uri: item }} style={{ flex: 1 }} />
-                <TouchableOpacity style={styles.delBtn} onPress={() => removePhoto(item)}><Text>✕</Text></TouchableOpacity>
+                <Image source={{ uri: item.uri }} style={{ flex: 1 }} />
+                <TouchableOpacity style={styles.delBtn} onPress={() => removePhoto(item.uri)}><Text>✕</Text></TouchableOpacity>
               </View>
             )}
           />

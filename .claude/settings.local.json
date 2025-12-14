@@ -19,7 +19,8 @@
       "Bash(adb devices:*)",
       "Bash(adb logcat:*)",
       "Bash(npm uninstall:*)",
-      "Bash(adb install:*)"
+      "Bash(adb install:*)",
+      "Bash(timeout 15 adb logcat:*)"
     ]
   }
 }

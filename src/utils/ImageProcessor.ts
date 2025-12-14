@@ -1,8 +1,7 @@
 import ImageEditor from '@react-native-community/image-editor';
-import { Image } from 'react-native';
 
 export interface ImageTile {
-  uri: string;      // Esto espera un STRING (texto)
+  uri: string;
   x: number;
   y: number;
   width: number;
@@ -11,28 +10,20 @@ export interface ImageTile {
 
 const MODEL_INPUT_SIZE = 1280;
 
-export const processImageTiling = async (photoUri: string): Promise<ImageTile[]> => {
+// MODIFICADO: NO recorta físicamente, solo retorna coordenadas
+export const processImageTiling = async (
+  photoUri: string,
+  width: number,
+  height: number
+): Promise<ImageTile[]> => {
   try {
-    console.log(`🟣 [ImageProcessor] Iniciando tiling para: ${photoUri}`);
+    console.log(`🟣 [ImageProcessor] processImageTiling() iniciado`);
+    console.log(`🟣 [ImageProcessor] URI: ${photoUri}`);
+    console.log(`🟣 [ImageProcessor] Dimensiones: ${width}x${height}`);
 
-    // 1. Obtener dimensiones
-    console.log('🟣 [ImageProcessor] Paso 1: Obteniendo dimensiones de imagen...');
-    const { width, height } = await new Promise<{ width: number; height: number }>((resolve, reject) => {
-      Image.getSize(
-        photoUri,
-        (w, h) => {
-          console.log(`✅ [ImageProcessor] Dimensiones obtenidas: ${w}x${h}`);
-          resolve({ width: w, height: h });
-        },
-        (error) => {
-          console.error('❌ [ImageProcessor] Error obteniendo dimensiones:', error);
-          reject(error);
-        }
-      );
-    });
+    console.log(`📸 [ImageProcessor] Procesando Tiling: ${width}x${height} px`);
 
-    console.log(`📸 [ImageProcessor] Tiling imagen original: ${width}x${height}`);
-
+    // Si la imagen es pequeña, no se divide
     if (width <= MODEL_INPUT_SIZE && height <= MODEL_INPUT_SIZE) {
       console.log(`✅ [ImageProcessor] Imagen pequeña, no requiere tiling (1 tile)`);
       return [{ uri: photoUri, x: 0, y: 0, width, height }];
@@ -41,8 +32,10 @@ export const processImageTiling = async (photoUri: string): Promise<ImageTile[]>
     const tiles: ImageTile[] = [];
     let tileCount = 0;
 
-    // 2. Algoritmo de Ventana Deslizante
-    console.log('🟣 [ImageProcessor] Paso 2: Iniciando algoritmo de ventana deslizante...');
+    console.log(`🟣 [ImageProcessor] Calculando tiles virtuales (sin recorte físico)...`);
+    console.log(`🟣 [ImageProcessor] Tamaño de tile: ${MODEL_INPUT_SIZE}x${MODEL_INPUT_SIZE}`);
+
+    // Algoritmo de Ventana Deslizante - SOLO CALCULA COORDENADAS
     for (let y = 0; y < height; y += MODEL_INPUT_SIZE) {
       for (let x = 0; x < width; x += MODEL_INPUT_SIZE) {
         tileCount++;
@@ -50,49 +43,28 @@ export const processImageTiling = async (photoUri: string): Promise<ImageTile[]>
         let cropX = x;
         let cropY = y;
 
+        // Ajuste de bordes
         if (cropX + MODEL_INPUT_SIZE > width) cropX = Math.max(0, width - MODEL_INPUT_SIZE);
         if (cropY + MODEL_INPUT_SIZE > height) cropY = Math.max(0, height - MODEL_INPUT_SIZE);
 
-        try {
-          // Calcular el tamaño real del tile (puede ser menor si está en el borde)
-          const tileWidth = Math.min(MODEL_INPUT_SIZE, width - cropX);
-          const tileHeight = Math.min(MODEL_INPUT_SIZE, height - cropY);
+        console.log(`✅ [ImageProcessor] Tile virtual #${tileCount} calculado en (${cropX}, ${cropY})`);
 
-          console.log(`🟣 [ImageProcessor] Recortando tile #${tileCount} en posición (${cropX}, ${cropY}) - Tamaño: ${tileWidth}x${tileHeight}`);
-
-          const cropData = {
-            offset: { x: cropX, y: cropY },
-            size: { width: tileWidth, height: tileHeight },
-            displaySize: { width: tileWidth, height: tileHeight },
-          };
-
-          // 1. Ejecutamos el recorte
-          const result: any = await ImageEditor.cropImage(photoUri, cropData);
-
-          // 2. Extraemos la ruta correctamente.
-          // Si 'result' es un objeto (versión nueva), usamos result.path
-          // Si 'result' es un string (versión vieja), usamos result directo
-          const finalUri = typeof result === 'object' ? result.path : result;
-          console.log(`✅ [ImageProcessor] Tile #${tileCount} recortado exitosamente: ${finalUri}`);
-
-          tiles.push({
-              uri: finalUri,  // Ahora sí es un string seguro
-              x: cropX,
-              y: cropY,
-              width: tileWidth,
-              height: tileHeight
-          });
-
-        } catch (error) {
-          console.error(`❌ [ImageProcessor] Error recortando tile #${tileCount}:`, error);
-        }
+        // Guardamos la URI original + coordenadas para recorte virtual
+        tiles.push({
+          uri: photoUri, // URI de la imagen ORIGINAL
+          x: cropX,
+          y: cropY,
+          width: MODEL_INPUT_SIZE,
+          height: MODEL_INPUT_SIZE
+        });
       }
     }
 
-    console.log(`✅ [ImageProcessor] Tiling completado - Total de tiles: ${tiles.length}`);
+    console.log(`✅ [ImageProcessor] Tiling virtual completado - Total de tiles: ${tiles.length}`);
     return tiles;
   } catch (error) {
     console.error('❌ [ImageProcessor] ERROR CRÍTICO en processImageTiling():', error);
+    console.error('❌ [ImageProcessor] Stack trace:', (error as Error).stack);
     throw error;
   }
 };
