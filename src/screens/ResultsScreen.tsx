@@ -152,6 +152,29 @@ const ResultsScreen = ({ route, navigation }: Props) => {
                   const tileDisplaySize = 150;
                   const tileScale = tileDisplaySize / tile.width;
 
+                  // Logging detallado para debugging
+                  console.log(`\n🔍 [Tile ${tileIdx + 1}] Debugging:`);
+                  console.log(`   Región del tile: (${tile.x}, ${tile.y}) - ${tile.width}x${tile.height}`);
+                  console.log(`   Detecciones en este tile: ${tileDetections.length}`);
+
+                  tileDetections.forEach((d, detIdx) => {
+                    console.log(`   📍 Detección ${detIdx + 1}:`);
+                    console.log(`      Coordenadas ABSOLUTAS: (${d.box.x}, ${d.box.y}, ${d.box.width}x${d.box.height})`);
+                    console.log(`      Coordenadas RELATIVAS al tile: (${d.box.x - tile.x}, ${d.box.y - tile.y})`);
+                    const relLeft = (d.box.x - tile.x) * tileScale;
+                    const relTop = (d.box.y - tile.y) * tileScale;
+                    console.log(`      Coordenadas ESCALADAS para display: (${relLeft.toFixed(1)}, ${relTop.toFixed(1)})`);
+
+                    // Verificar si la caja está completamente dentro del tile
+                    const isFullyInside = (
+                      d.box.x >= tile.x &&
+                      d.box.y >= tile.y &&
+                      (d.box.x + d.box.width) <= (tile.x + tile.width) &&
+                      (d.box.y + d.box.height) <= (tile.y + tile.height)
+                    );
+                    console.log(`      ✓ Caja completamente dentro del tile: ${isFullyInside ? 'SÍ' : 'NO (parcial)'}`);
+                  });
+
                   return (
                     <View style={[styles.tileCard, hasDetections && { borderColor: '#15803d', borderWidth: 3 }]}>
                       <View style={styles.tileImageContainer}>
@@ -167,6 +190,18 @@ const ResultsScreen = ({ route, navigation }: Props) => {
                             height: item.height * tileScale,
                           }}
                         >
+                          {/* Marco del tile para referencia visual */}
+                          <View style={{
+                            position: 'absolute',
+                            top: 0,
+                            left: 0,
+                            right: 0,
+                            bottom: 0,
+                            borderWidth: 1,
+                            borderColor: 'blue',
+                            borderStyle: 'dashed'
+                          }} />
+
                           {/* Dibujar detecciones relativas al tile */}
                           {tileDetections.map((d, i) => {
                             const relativeBox = {
@@ -176,12 +211,28 @@ const ResultsScreen = ({ route, navigation }: Props) => {
                               height: d.box.height * tileScale
                             };
                             return (
-                              <View key={i} style={[styles.box, relativeBox]} />
+                              <View key={i} style={[styles.box, relativeBox]}>
+                                {/* Número de detección para identificar */}
+                                <Text style={{
+                                  position: 'absolute',
+                                  top: 2,
+                                  left: 2,
+                                  color: 'white',
+                                  fontSize: 10,
+                                  fontWeight: 'bold',
+                                  backgroundColor: 'red',
+                                  paddingHorizontal: 4,
+                                  borderRadius: 3
+                                }}>
+                                  {i + 1}
+                                </Text>
+                              </View>
                             );
                           })}
                         </ImageBackground>
                       </View>
                       <Text style={styles.tileLabel}>Tile {tileIdx + 1}</Text>
+                      <Text style={styles.tileCoords}>({tile.x},{tile.y})</Text>
                       <Text style={[styles.tileDetCount, hasDetections && { color: '#15803d', fontWeight: 'bold' }]}>
                         {tileDetections.length > 0 ? `🎯 ${tileDetections.length}` : '—'}
                       </Text>
@@ -245,6 +296,11 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: '#64748b',
     marginTop: 3
+  },
+  tileCoords: {
+    fontSize: 9,
+    color: '#94a3b8',
+    marginTop: 2
   }
 });
 

@@ -13,6 +13,9 @@ export interface AnalysisResult {
   tiles: ImageTile[];
 }
 
+// Umbral de confianza: solo mostrar detecciones con score >= 0.25 (25%)
+const CONFIDENCE_THRESHOLD = 0.25;
+
 let loadedModel: TensorflowModel | null = null;
 let currentModelName: string = '';
 
@@ -93,12 +96,14 @@ export const analyzeImage = async (
         const output = await model.run([dummyInput]);
         console.log(`✅ [YoloService] Tile ${i + 1} procesado`);
 
-        // Simulación de detección para UI
+        // Simulación de detección para UI con scores variados
         if (Math.random() > 0.6) {
-          console.log(`🎯 [YoloService] Detección encontrada en tile ${i + 1}`);
+          // Generar score aleatorio entre 0.2 y 0.95
+          const randomScore = Math.random() * 0.75 + 0.2;
+          console.log(`🎯 [YoloService] Detección encontrada en tile ${i + 1} con score: ${randomScore.toFixed(2)}`);
           allDetections.push({
             classIndex: 0,
-            score: 0.85,
+            score: randomScore,
             box: {
               x: tile.x + 100,
               y: tile.y + 100,
@@ -113,8 +118,13 @@ export const analyzeImage = async (
       }
     }
 
-    console.log(`✅ [YoloService] Análisis completado - Total detecciones: ${allDetections.length}`);
-    return { detections: allDetections, tiles };
+    console.log(`✅ [YoloService] Análisis completado - Total detecciones sin filtrar: ${allDetections.length}`);
+
+    // Filtrar detecciones por umbral de confianza
+    const filteredDetections = allDetections.filter(d => d.score >= CONFIDENCE_THRESHOLD);
+    console.log(`🎯 [YoloService] Detecciones filtradas (score >= ${CONFIDENCE_THRESHOLD}): ${filteredDetections.length}`);
+
+    return { detections: filteredDetections, tiles };
   } catch (error) {
     console.error('❌ [YoloService] ERROR CRÍTICO en analyzeImage():', error);
     console.error('❌ [YoloService] Stack trace:', (error as Error).stack);
