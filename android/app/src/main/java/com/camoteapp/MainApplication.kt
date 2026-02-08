@@ -19,6 +19,9 @@ class MainApplication : Application(), ReactApplication {
             PackageList(this).packages.apply {
               // Packages that cannot be autolinked yet can be added manually here, for example:
               // add(MyReactNativePackage())
+              
+              // 🎯 Módulo Nativo para Extracción de Píxeles (TensorFlow Lite)
+              add(ImagePixelPackage())
             }
 
         override fun getJSMainModuleName(): String = "index"

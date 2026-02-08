@@ -1,6 +1,7 @@
-import { loadTensorflowModel, TensorflowModel } from 'react-native-fast-tflite';
 import { Alert } from 'react-native';
+import { loadTensorflowModel, TensorflowModel } from 'react-native-fast-tflite';
 import { ImageTile, processImageTiling } from './ImageProcessor';
+import { imageRegionToTensor, parseYoloOutput } from './TensorConverter';
 
 export interface Detection {
   classIndex: number;
@@ -13,8 +14,9 @@ export interface AnalysisResult {
   tiles: ImageTile[];
 }
 
-// Umbral de confianza: solo mostrar detecciones con score >= 0.25 (25%)
-const CONFIDENCE_THRESHOLD = 0.25;
+// Umbral de confianza: solo mostrar detecciones con score >= 0.5 (50%)
+// Este threshold elimina detecciones débiles y se alinea con el comportamiento de Python/YOLOv8
+const CONFIDENCE_THRESHOLD = 0.5;
 
 let loadedModel: TensorflowModel | null = null;
 let currentModelName: string = '';
@@ -29,26 +31,60 @@ export const loadYoloModel = async (modelName: 'yolov8' | 'yolov11') => {
     }
 
     console.log(`🔄 [YoloService] Cargando ${modelName}...`);
-    const fileName = modelName === 'yolov8' ? 'yolov8.tflite' : 'yolov11.tflite';
-    console.log(`📂 [YoloService] Nombre de archivo: ${fileName}`);
+    // ⚠️ IMPORTANTE: react-native-fast-tflite busca en res/raw/ sin extensión
+    const resourceName = modelName; // 'yolov8' o 'yolov11' (SIN .tflite)
+    console.log(`📂 [YoloService] Nombre de recurso: ${resourceName}`);
 
-    // TEMPORAL: Simulación para debugging - comentar cuando TFLite funcione
-    console.log('⚠️ [YoloService] MODO SIMULACIÓN ACTIVO - No se carga TFLite real');
-    loadedModel = { run: async () => [] } as any; // Mock model
-    currentModelName = modelName;
-    console.log("✅ [YoloService] Modelo simulado cargado exitosamente.");
-    return loadedModel;
+    // 🚀 INTENTO DE CARGA REAL DE TFLITE
+    try {
+      console.log(
+        `🔵 [YoloService] Intentando cargar TFLite REAL desde res/raw...`,
+      );
+      console.log(
+        `🔵 [YoloService] Ruta: android/app/src/main/res/raw/${resourceName}.tflite`,
+      );
 
-    // DESCOMENTAR CUANDO SOLUCIONES EL CRASH DE TFLITE:
-    // console.log(`🔵 [YoloService] Llamando a loadTensorflowModel()...`);
-    // loadedModel = await loadTensorflowModel({ url: fileName });
-    // currentModelName = modelName;
-    // console.log("✅ [YoloService] Modelo cargado exitosamente.");
-    // return loadedModel;
+      loadedModel = await loadTensorflowModel({ url: resourceName });
+      currentModelName = modelName;
+
+      console.log('✅ [YoloService] ¡Modelo TFLite cargado exitosamente!');
+      console.log(`✅ [YoloService] Modelo activo: ${currentModelName}`);
+      return loadedModel;
+    } catch (error: any) {
+      console.error('❌ [YoloService] ERROR CRÍTICO al cargar TFLite:', error);
+      console.error('❌ [YoloService] Mensaje de error:', error.message);
+      console.error('❌ [YoloService] Stack trace:', error.stack);
+      console.error('❌ [YoloService] Tipo de error:', typeof error);
+      console.error(
+        '❌ [YoloService] Error completo:',
+        JSON.stringify(error, null, 2),
+      );
+
+      Alert.alert(
+        '⚠️ Error TensorFlow Lite',
+        `No se pudo cargar el modelo ${modelName}:\n\n` +
+          `Error: ${error.message}\n\n` +
+          `Recurso: ${resourceName}\n\n` +
+          `La app continuará en modo simulación.`,
+        [
+          {
+            text: 'Ver Logs',
+            onPress: () => console.log('📋 Revisa los logs en la consola'),
+          },
+          { text: 'Continuar', style: 'cancel' },
+        ],
+      );
+
+      // FALLBACK: Retornar mock si falla
+      console.log('⚠️ [YoloService] Activando MODO SIMULACIÓN como fallback');
+      loadedModel = { run: async () => [] } as any;
+      currentModelName = modelName;
+      return loadedModel;
+    }
   } catch (error) {
-    console.error("❌ [YoloService] ERROR cargando modelo:", error);
-    console.error("❌ [YoloService] Stack trace:", (error as Error).stack);
-    Alert.alert("Error", `No se encontró ${modelName} en assets.`);
+    console.error('❌ [YoloService] ERROR cargando modelo:', error);
+    console.error('❌ [YoloService] Stack trace:', (error as Error).stack);
+    Alert.alert('Error', `No se encontró ${modelName} en assets.`);
     return null;
   }
 };
@@ -58,7 +94,7 @@ export const analyzeImage = async (
   imageUri: string,
   width: number,
   height: number,
-  modelName: 'yolov8' | 'yolov11'
+  modelName: 'yolov8' | 'yolov11',
 ): Promise<AnalysisResult> => {
   try {
     console.log(`🔵 [YoloService] analyzeImage() iniciado`);
@@ -76,40 +112,87 @@ export const analyzeImage = async (
 
     // Pasamos dimensiones explícitas (Evita crash de memoria)
     console.log(`🔵 [YoloService] Paso 2: Procesando tiling de imagen...`);
-    console.log(`🔵 [YoloService] Llamando a processImageTiling(${imageUri}, ${width}, ${height})...`);
+    console.log(
+      `🔵 [YoloService] Llamando a processImageTiling(${imageUri}, ${width}, ${height})...`,
+    );
     const tiles = await processImageTiling(imageUri, width, height);
-    console.log(`✅ [YoloService] Tiling completado - ${tiles.length} tiles generados`);
+    console.log(
+      `✅ [YoloService] Tiling completado - ${tiles.length} tiles generados`,
+    );
 
     const allDetections: Detection[] = [];
-    console.log(`🚀 [YoloService] Paso 3: Analizando ${tiles.length} tiles con ${modelName}...`);
+    console.log(
+      `🚀 [YoloService] Paso 3: Analizando ${tiles.length} tiles con ${modelName}...`,
+    );
 
     for (let i = 0; i < tiles.length; i++) {
       const tile = tiles[i];
       try {
-        console.log(`🔵 [YoloService] Procesando tile ${i + 1}/${tiles.length}`);
-        console.log(`🔵 [YoloService] Tile posición: (${tile.x}, ${tile.y}), tamaño: ${tile.width}x${tile.height}`);
+        console.log(
+          `🔵 [YoloService] Procesando tile ${i + 1}/${tiles.length}`,
+        );
+        console.log(
+          `🔵 [YoloService] Tile posición: (${tile.x}, ${tile.y}), tamaño: ${tile.width}x${tile.height}`,
+        );
 
-        // Simulación de Tensor (Placeholder para flujo visual)
-        console.log(`🔵 [YoloService] Creando dummy input tensor...`);
-        const dummyInput = new Float32Array(1 * 1280 * 1280 * 3).fill(0.5);
-        console.log(`🔵 [YoloService] Ejecutando modelo en tile ${i + 1}...`);
-        const output = await model.run([dummyInput]);
+        // ✅ NUEVA IMPLEMENTACIÓN: Convertir región de imagen a tensor
+        console.log(
+          `🔵 [YoloService] Convirtiendo región de imagen a tensor...`,
+        );
+        const tensorInput = await imageRegionToTensor(
+          tile.uri,
+          tile.x,
+          tile.y,
+          tile.width,
+          tile.height,
+        );
+        console.log(
+          `✅ [YoloService] Tensor generado: ${tensorInput.length} elementos`,
+        );
+
+        console.log(
+          `🔵 [YoloService] Ejecutando inferencia en tile ${i + 1}...`,
+        );
+        const output = await model.run([tensorInput]);
         console.log(`✅ [YoloService] Tile ${i + 1} procesado`);
+        console.log(`📊 [YoloService] Output shape:`, output?.length || 'N/A');
 
-        // Simulación de detección para UI con scores variados
-        if (Math.random() > 0.6) {
-          // Generar score aleatorio entre 0.2 y 0.95
-          const randomScore = Math.random() * 0.75 + 0.2;
-          console.log(`🎯 [YoloService] Detección encontrada en tile ${i + 1} con score: ${randomScore.toFixed(2)}`);
-          allDetections.push({
-            classIndex: 0,
-            score: randomScore,
-            box: {
-              x: tile.x + 100,
-              y: tile.y + 100,
-              width: 300,
-              height: 300
-            }
+        // ✅ PARSEAR OUTPUT REAL DE YOLO
+        if (output && output.length > 0) {
+          console.log(`🔵 [YoloService] Parseando detecciones del output...`);
+          const tileDetections = parseYoloOutput(
+            output,
+            tile.width,
+            tile.height,
+            CONFIDENCE_THRESHOLD,
+          );
+
+          console.log(
+            `✅ [YoloService] Detecciones en tile ${i + 1}: ${
+              tileDetections.length
+            }`,
+          );
+
+          // Convertir coordenadas locales del tile a coordenadas globales de la imagen
+          tileDetections.forEach(detection => {
+            const globalDetection: Detection = {
+              classIndex: detection.classIndex,
+              score: detection.score,
+              box: {
+                x: tile.x + detection.box.x,
+                y: tile.y + detection.box.y,
+                width: detection.box.width,
+                height: detection.box.height,
+              },
+            };
+            allDetections.push(globalDetection);
+            console.log(
+              `🎯 [YoloService] Detección agregada - Score: ${detection.score.toFixed(
+                2,
+              )}, Box: (${globalDetection.box.x.toFixed(
+                0,
+              )}, ${globalDetection.box.y.toFixed(0)})`,
+            );
           });
         }
       } catch (err) {
@@ -118,11 +201,17 @@ export const analyzeImage = async (
       }
     }
 
-    console.log(`✅ [YoloService] Análisis completado - Total detecciones sin filtrar: ${allDetections.length}`);
+    console.log(
+      `✅ [YoloService] Análisis completado - Total detecciones sin filtrar: ${allDetections.length}`,
+    );
 
     // Filtrar detecciones por umbral de confianza
-    const filteredDetections = allDetections.filter(d => d.score >= CONFIDENCE_THRESHOLD);
-    console.log(`🎯 [YoloService] Detecciones filtradas (score >= ${CONFIDENCE_THRESHOLD}): ${filteredDetections.length}`);
+    const filteredDetections = allDetections.filter(
+      d => d.score >= CONFIDENCE_THRESHOLD,
+    );
+    console.log(
+      `🎯 [YoloService] Detecciones filtradas (score >= ${CONFIDENCE_THRESHOLD}): ${filteredDetections.length}`,
+    );
 
     return { detections: filteredDetections, tiles };
   } catch (error) {

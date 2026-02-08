@@ -1,71 +1,153 @@
-import React, { useState, useRef } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Modal, FlatList, Image } from 'react-native';
-import { Camera, useCameraDevice, useCameraPermission } from 'react-native-vision-camera';
-import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
-import { RootStackParamList, PhotoAsset } from '../../App';
+import { RouteProp, useNavigation, useRoute } from '@react-navigation/native';
+import React, { useState } from 'react';
+import {
+  Alert,
+  FlatList,
+  Image,
+  Modal,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native';
+import {
+  Asset,
+  ImagePickerResponse,
+  launchCamera,
+  launchImageLibrary,
+} from 'react-native-image-picker';
+import { PhotoAsset, RootStackParamList } from '../../App';
 
 const DetectionScreen = () => {
   const navigation = useNavigation<any>();
   const route = useRoute<RouteProp<RootStackParamList, 'Detection'>>();
   const { modelName } = route.params;
 
-  const device = useCameraDevice('back');
-  const { hasPermission, requestPermission } = useCameraPermission();
-  const camera = useRef<Camera>(null);
-  const [photos, setPhotos] = useState<string[]>([]);
+  const [photos, setPhotos] = useState<PhotoAsset[]>([]);
   const [showGallery, setShowGallery] = useState(false);
 
-  if (!hasPermission) requestPermission();
-  if (!device) return <Text>Cargando Cámara...</Text>;
-
   const takePhoto = async () => {
-    if (camera.current) {
-      const p = await camera.current.takePhoto({ flash: 'off', enableShutterSound: true });
-      setPhotos([...photos, `file://${p.path}`]);
+    const result: ImagePickerResponse = await launchCamera({
+      mediaType: 'photo',
+      cameraType: 'back',
+      saveToPhotos: true,
+      quality: 1,
+      includeBase64: false,
+    });
+
+    if (result.didCancel) {
+      return;
     }
+
+    if (result.errorCode) {
+      Alert.alert(
+        'Error',
+        result.errorMessage || 'No se pudo capturar la foto',
+      );
+      return;
+    }
+
+    if (result.assets && result.assets.length > 0) {
+      const asset = result.assets[0];
+      if (asset.uri && asset.width && asset.height) {
+        setPhotos([
+          ...photos,
+          {
+            uri: asset.uri,
+            width: asset.width,
+            height: asset.height,
+          },
+        ]);
+      }
+    }
+  };
+
+  const selectFromGallery = async () => {
+    const result: ImagePickerResponse = await launchImageLibrary({
+      mediaType: 'photo',
+      selectionLimit: 10,
+      quality: 1,
+      includeBase64: false,
+    });
+
+    if (result.didCancel || !result.assets) {
+      return;
+    }
+
+    const newPhotos: PhotoAsset[] = result.assets
+      .filter(
+        (
+          asset,
+        ): asset is Asset & { uri: string; width: number; height: number } =>
+          !!asset.uri && !!asset.width && !!asset.height,
+      )
+      .map(asset => ({
+        uri: asset.uri,
+        width: asset.width,
+        height: asset.height,
+      }));
+
+    setPhotos([...photos, ...newPhotos]);
   };
 
   const analyze = async () => {
     setShowGallery(false);
-    
-    // Convertimos URIs a PhotoAssets calculando dimensiones
-    // Esto es rápido porque son pocas fotos
-    const assetsPromises = photos.map(uri => new Promise<PhotoAsset | null>((resolve) => {
-        Image.getSize(uri, (width, height) => {
-            resolve({ uri, width, height });
-        }, () => resolve(null));
-    }));
-
-    const validAssets = (await Promise.all(assetsPromises)).filter((a): a is PhotoAsset => a !== null);
-
-    navigation.navigate('Results', { photos: validAssets, modelName });
+    navigation.navigate('Results', { photos, modelName });
   };
 
   return (
-    <View style={{ flex: 1, backgroundColor: 'black' }}>
-      <Camera ref={camera} style={StyleSheet.absoluteFill} device={device} isActive={!showGallery} photo={true} />
-      
+    <View style={{ flex: 1, backgroundColor: '#1a1a1a' }}>
+      {/* Header */}
       <View style={styles.ui}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.btnSmall}><Text style={styles.txt}>Salir</Text></TouchableOpacity>
-        <TouchableOpacity onPress={() => setShowGallery(true)} style={styles.btnSmall}><Text style={styles.txt}>{photos.length} 📸</Text></TouchableOpacity>
+        <TouchableOpacity
+          onPress={() => navigation.goBack()}
+          style={styles.btnSmall}
+        >
+          <Text style={styles.txt}>← Salir</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={() => setShowGallery(true)}
+          style={styles.btnSmall}
+        >
+          <Text style={styles.txt}>{photos.length} 📸</Text>
+        </TouchableOpacity>
       </View>
 
-      <TouchableOpacity onPress={takePhoto} style={styles.shutter} />
-      
-      {photos.length > 0 && !showGallery && (
-        <TouchableOpacity onPress={analyze} style={styles.analyzeBtn}>
-          <Text style={styles.txt}>ANALIZAR ({modelName.toUpperCase()})</Text>
-        </TouchableOpacity>
-      )}
+      {/* Main Content */}
+      <View style={styles.mainContent}>
+        <Text style={styles.title}>Captura de Hojas</Text>
+        <Text style={styles.subtitle}>Modelo: {modelName.toUpperCase()}</Text>
 
+        <TouchableOpacity onPress={takePhoto} style={styles.cameraBtn}>
+          <Text style={styles.cameraBtnText}>📷 TOMAR FOTO</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity onPress={selectFromGallery} style={styles.galleryBtn}>
+          <Text style={styles.galleryBtnText}>🖼️ SELECCIONAR DE GALERÍA</Text>
+        </TouchableOpacity>
+      </View>
       <Modal visible={showGallery} animationType="slide">
         <View style={{ flex: 1, backgroundColor: '#111' }}>
-          <FlatList 
-            data={photos} numColumns={2} 
-            renderItem={({item}) => <Image source={{uri: item}} style={{flex: 1, height: 200, margin: 5}} />}
+          <FlatList
+            data={photos}
+            numColumns={2}
+            renderItem={({ item }) => (
+              <Image
+                source={{ uri: item.uri }}
+                style={{ flex: 1, height: 200, margin: 5 }}
+              />
+            )}
+            keyExtractor={(item, index) => `${item.uri}-${index}`}
           />
-          <TouchableOpacity onPress={analyze} style={styles.bigBtn}><Text style={styles.txt}>CONFIRMAR</Text></TouchableOpacity>
-          <TouchableOpacity onPress={() => setShowGallery(false)} style={[styles.bigBtn, {backgroundColor: 'red'}]}><Text style={styles.txt}>VOLVER</Text></TouchableOpacity>
+          <TouchableOpacity onPress={analyze} style={styles.bigBtn}>
+            <Text style={styles.txt}>✓ CONFIRMAR Y ANALIZAR</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => setShowGallery(false)}
+            style={[styles.bigBtn, { backgroundColor: 'red' }]}
+          >
+            <Text style={styles.txt}>← VOLVER</Text>
+          </TouchableOpacity>
         </View>
       </Modal>
     </View>
@@ -73,12 +155,80 @@ const DetectionScreen = () => {
 };
 
 const styles = StyleSheet.create({
-  ui: { flexDirection: 'row', justifyContent: 'space-between', padding: 20, paddingTop: 40 },
-  btnSmall: { backgroundColor: 'rgba(0,0,0,0.5)', padding: 10, borderRadius: 20 },
-  txt: { color: 'white', fontWeight: 'bold' },
-  shutter: { width: 80, height: 80, borderRadius: 40, backgroundColor: 'white', position: 'absolute', bottom: 40, alignSelf: 'center', borderWidth: 5, borderColor: '#ccc' },
-  analyzeBtn: { position: 'absolute', bottom: 40, right: 20, backgroundColor: '#15803d', padding: 15, borderRadius: 30 },
-  bigBtn: { padding: 20, backgroundColor: '#15803d', alignItems: 'center', margin: 10, borderRadius: 10 }
+  ui: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    padding: 20,
+    paddingTop: 40,
+  },
+  mainContent: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  title: {
+    color: 'white',
+    fontSize: 28,
+    fontWeight: 'bold',
+    marginBottom: 10,
+  },
+  subtitle: {
+    color: '#888',
+    fontSize: 16,
+    marginBottom: 40,
+  },
+  cameraBtn: {
+    backgroundColor: '#15803d',
+    paddingVertical: 20,
+    paddingHorizontal: 40,
+    borderRadius: 30,
+    marginBottom: 20,
+    minWidth: 250,
+    alignItems: 'center',
+  },
+  cameraBtnText: {
+    color: 'white',
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  galleryBtn: {
+    backgroundColor: '#1e40af',
+    paddingVertical: 20,
+    paddingHorizontal: 40,
+    borderRadius: 30,
+    minWidth: 250,
+    alignItems: 'center',
+  },
+  galleryBtnText: {
+    color: 'white',
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  btnSmall: {
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    padding: 10,
+    borderRadius: 20,
+  },
+  txt: {
+    color: 'white',
+    fontWeight: 'bold',
+  },
+  analyzeBtn: {
+    position: 'absolute',
+    bottom: 40,
+    right: 20,
+    backgroundColor: '#15803d',
+    padding: 15,
+    borderRadius: 30,
+  },
+  bigBtn: {
+    padding: 20,
+    backgroundColor: '#15803d',
+    alignItems: 'center',
+    margin: 10,
+    borderRadius: 10,
+  },
 });
 
 export default DetectionScreen;
