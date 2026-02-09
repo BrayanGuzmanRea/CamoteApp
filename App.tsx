@@ -1,9 +1,9 @@
-import React from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import React from 'react';
 
-import HomeScreen from './src/screens/HomeScreen';
 import DetectionScreen from './src/screens/DetectionScreen';
+import HomeScreen from './src/screens/HomeScreen';
 import ResultsScreen from './src/screens/ResultsScreen';
 
 // --- NUEVA INTERFAZ PARA LAS FOTOS ---
@@ -17,7 +17,11 @@ export type RootStackParamList = {
   Home: undefined;
   Detection: { modelName: 'yolov8' | 'yolov11' };
   // Ahora pasamos objetos completos, no solo strings
-  Results: { photos: PhotoAsset[]; modelName: 'yolov8' | 'yolov11' };
+  Results: {
+    photos: PhotoAsset[];
+    modelName: 'yolov8' | 'yolov11';
+    threshold: number;
+  };
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -25,7 +29,7 @@ const Stack = createNativeStackNavigator<RootStackParamList>();
 function App(): React.JSX.Element {
   return (
     <NavigationContainer>
-      <Stack.Navigator 
+      <Stack.Navigator
         initialRouteName="Home"
         screenOptions={{ headerShown: false, animation: 'slide_from_right' }}
       >

@@ -1,3 +1,4 @@
+import Slider from '@react-native-community/slider';
 import { RouteProp, useNavigation, useRoute } from '@react-navigation/native';
 import React, { useState } from 'react';
 import {
@@ -25,6 +26,7 @@ const DetectionScreen = () => {
 
   const [photos, setPhotos] = useState<PhotoAsset[]>([]);
   const [showGallery, setShowGallery] = useState(false);
+  const [threshold, setThreshold] = useState(0.5);
 
   const takePhoto = async () => {
     const result: ImagePickerResponse = await launchCamera({
@@ -92,7 +94,7 @@ const DetectionScreen = () => {
 
   const analyze = async () => {
     setShowGallery(false);
-    navigation.navigate('Results', { photos, modelName });
+    navigation.navigate('Results', { photos, modelName, threshold });
   };
 
   return (
@@ -117,6 +119,44 @@ const DetectionScreen = () => {
       <View style={styles.mainContent}>
         <Text style={styles.title}>Captura de Hojas</Text>
         <Text style={styles.subtitle}>Modelo: {modelName.toUpperCase()}</Text>
+
+        {/* Slider de threshold */}
+        <View style={{ marginVertical: 20, paddingHorizontal: 10 }}>
+          <View
+            style={{
+              flexDirection: 'row',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              marginBottom: 8,
+            }}
+          >
+            <Text style={{ color: '#64748b', fontSize: 12 }}>Bajo</Text>
+            <Text style={{ color: 'white', fontSize: 18, fontWeight: 'bold' }}>
+              {(threshold * 100).toFixed(0)}%
+            </Text>
+            <Text style={{ color: '#64748b', fontSize: 12 }}>Alto</Text>
+          </View>
+          <Slider
+            minimumValue={0.2}
+            maximumValue={0.9}
+            step={0.05}
+            value={threshold}
+            onValueChange={setThreshold}
+            minimumTrackTintColor="#15803d"
+            maximumTrackTintColor="#cbd5e1"
+            thumbTintColor="#15803d"
+          />
+          <Text
+            style={{
+              color: '#94a3b8',
+              fontSize: 11,
+              textAlign: 'center',
+              marginTop: 4,
+            }}
+          >
+            Umbral de Confianza
+          </Text>
+        </View>
 
         <TouchableOpacity onPress={takePhoto} style={styles.cameraBtn}>
           <Text style={styles.cameraBtnText}>📷 TOMAR FOTO</Text>

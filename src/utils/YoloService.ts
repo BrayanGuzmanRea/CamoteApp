@@ -14,9 +14,9 @@ export interface AnalysisResult {
   tiles: ImageTile[];
 }
 
-// Umbral de confianza: solo mostrar detecciones con score >= 0.5 (50%)
+// Umbral de confianza por defecto (puede ser sobrescrito al llamar analyzeImage)
 // Este threshold elimina detecciones débiles y se alinea con el comportamiento de Python/YOLOv8
-const CONFIDENCE_THRESHOLD = 0.5;
+const DEFAULT_CONFIDENCE_THRESHOLD = 0.5;
 
 let loadedModel: TensorflowModel | null = null;
 let currentModelName: string = '';
@@ -95,12 +95,14 @@ export const analyzeImage = async (
   width: number,
   height: number,
   modelName: 'yolov8' | 'yolov11',
+  confidenceThreshold: number = DEFAULT_CONFIDENCE_THRESHOLD,
 ): Promise<AnalysisResult> => {
   try {
     console.log(`🔵 [YoloService] analyzeImage() iniciado`);
     console.log(`🔵 [YoloService] URI: ${imageUri}`);
     console.log(`🔵 [YoloService] Dimensiones: ${width}x${height}`);
     console.log(`🔵 [YoloService] Modelo: ${modelName}`);
+    console.log(`🔵 [YoloService] Threshold: ${confidenceThreshold}`);
 
     console.log(`🔵 [YoloService] Paso 1: Cargando modelo...`);
     const model = await loadYoloModel(modelName);
@@ -159,12 +161,14 @@ export const analyzeImage = async (
 
         // ✅ PARSEAR OUTPUT REAL DE YOLO
         if (output && output.length > 0) {
-          console.log(`🔵 [YoloService] Parseando detecciones del output...`);
+          console.log(
+            `🔵 [YoloService] Parseando detecciones del output con threshold ${confidenceThreshold}...`,
+          );
           const tileDetections = parseYoloOutput(
             output,
             tile.width,
             tile.height,
-            CONFIDENCE_THRESHOLD,
+            confidenceThreshold,
           );
 
           console.log(
@@ -207,10 +211,10 @@ export const analyzeImage = async (
 
     // Filtrar detecciones por umbral de confianza
     const filteredDetections = allDetections.filter(
-      d => d.score >= CONFIDENCE_THRESHOLD,
+      d => d.score >= confidenceThreshold,
     );
     console.log(
-      `🎯 [YoloService] Detecciones filtradas (score >= ${CONFIDENCE_THRESHOLD}): ${filteredDetections.length}`,
+      `🎯 [YoloService] Detecciones filtradas (score >= ${confidenceThreshold}): ${filteredDetections.length}`,
     );
 
     return { detections: filteredDetections, tiles };
