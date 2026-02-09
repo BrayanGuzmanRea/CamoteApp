@@ -9,7 +9,10 @@ import android.net.Uri
 import com.facebook.react.bridge.*
 import java.io.File
 import java.io.FileInputStream
+import java.io.FileOutputStream
 import java.io.InputStream
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import kotlin.math.min
 
 /**
@@ -30,12 +33,15 @@ class ImagePixelModule(reactContext: ReactApplicationContext) : ReactContextBase
     /**
      * Extrae píxeles RGB normalizados de una imagen
      * 
+     * OPTIMIZADO: Retorna URI de archivo binario en lugar de array gigante
+     * para evitar std::bad_alloc en React Native bridge
+     * 
      * @param imageUri URI de la imagen (file://, content://, etc.)
      * @param targetWidth Ancho objetivo (default: 1280)
      * @param targetHeight Alto objetivo (default: 1280)
-     * @param promise Promise que retorna WritableArray con píxeles normalizados
+     * @param promise Promise que retorna URI del archivo .bin con píxeles
      * 
-     * Formato de salida: Float32Array de tamaño [targetWidth * targetHeight * 3]
+     * Formato de salida: Archivo binario Float32 (little-endian)
      * Valores normalizados: [0.0 - 1.0] (RGB / 255.0)
      * Orden: [R, G, B, R, G, B, ...] para cada píxel
      */
@@ -66,11 +72,25 @@ class ImagePixelModule(reactContext: ReactApplicationContext) : ReactContextBase
             // Liberar memoria del bitmap
             bitmap.recycle()
 
-            // Retornar como WritableArray
-            val pixelArray = Arguments.createArray()
-            pixels.forEach { pixelArray.pushDouble(it.toDouble()) }
+            // 🧹 SOLUCIÓN CRÍTICA: Escribir a archivo binario en lugar de retornar array
+            // Esto evita std::bad_alloc causado por 4.9M llamadas a pushDouble() en bridge
+            val cacheDir = reactApplicationContext.cacheDir
+            val tempFile = File.createTempFile("tensor_pixels_", ".bin", cacheDir)
+            
+            // Escribir FloatArray como binario (little-endian)
+            FileOutputStream(tempFile).use { fos ->
+                val buffer = ByteBuffer.allocate(pixels.size * 4) // 4 bytes por float
+                buffer.order(ByteOrder.LITTLE_ENDIAN)
+                
+                for (pixel in pixels) {
+                    buffer.putFloat(pixel)
+                }
+                
+                fos.write(buffer.array())
+            }
 
-            promise.resolve(pixelArray)
+            // Retornar URI del archivo temporal
+            promise.resolve(tempFile.absolutePath)
 
         } catch (e: Exception) {
             promise.reject("PIXEL_EXTRACTION_ERROR", "Error extracting pixels: ${e.message}", e)

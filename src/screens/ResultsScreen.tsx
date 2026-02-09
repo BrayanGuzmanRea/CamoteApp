@@ -2,6 +2,7 @@ import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import React, { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   Image,
   ImageBackground,
@@ -16,7 +17,21 @@ import ImageViewer from 'react-native-image-zoom-viewer';
 import ViewShot from 'react-native-view-shot';
 import { RootStackParamList } from '../../App';
 import { ImageTile } from '../utils/ImageProcessor';
-import { analyzeImage, Detection } from '../utils/YoloService';
+import {
+  PerformanceMetrics,
+  calculateStats,
+  exportMetricsCSV,
+  exportMetricsJSON,
+  formatBattery,
+  formatMemory,
+  formatTime,
+  generateAnalysisId,
+  getBatteryLevel,
+  getDeviceInfo,
+  isCharging,
+  saveToHistory,
+} from '../utils/PerformanceMonitor';
+import { AnalysisMetrics, Detection, analyzeImage } from '../utils/YoloService';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Results'>;
 
@@ -35,6 +50,7 @@ const ResultsScreen = ({ route, navigation }: Props) => {
       width: number;
       height: number;
       tiles: ImageTile[];
+      metrics: AnalysisMetrics;
     }[]
   >([]);
   const [loading, setLoading] = useState(true);
@@ -52,6 +68,13 @@ const ResultsScreen = ({ route, navigation }: Props) => {
     height: number;
   } | null>(null);
   const viewShotRefs = useRef<(ViewShot | null)[]>([]);
+
+  // Estados para métricas
+  const [performanceMetrics, setPerformanceMetrics] = useState<
+    PerformanceMetrics[]
+  >([]);
+  const [metricsModalVisible, setMetricsModalVisible] = useState(false);
+  const [selectedMetricsIndex, setSelectedMetricsIndex] = useState(0);
 
   // Función para capturar imagen con cuadros dibujados
   const handleImagePress = async (item: any, index: number) => {
@@ -89,7 +112,13 @@ const ResultsScreen = ({ route, navigation }: Props) => {
     const run = async () => {
       try {
         console.log('🟡 [ResultsScreen] Función run() iniciada');
+
+        // Obtener info del dispositivo (una vez)
+        const deviceInfo = await getDeviceInfo();
+        console.log('📱 [ResultsScreen] Dispositivo:', deviceInfo);
+
         const res = [];
+        const allMetrics: PerformanceMetrics[] = [];
 
         for (let i = 0; i < photos.length; i++) {
           const photo = photos[i];
@@ -99,6 +128,15 @@ const ResultsScreen = ({ route, navigation }: Props) => {
           console.log(`🔵 [ResultsScreen] URI: ${photo.uri}`);
           console.log(
             `🔵 [ResultsScreen] Dimensiones: ${photo.width}x${photo.height}`,
+          );
+
+          // 🔋 CAPTURAR BATERÍA ANTES
+          const batteryBefore = await getBatteryLevel();
+          const charging = await isCharging();
+          console.log(
+            `🔋 [ResultsScreen] Batería antes: ${batteryBefore.toFixed(
+              1,
+            )}% (Cargando: ${charging})`,
           );
 
           // Pasamos width y height explícitamente + threshold
@@ -112,11 +150,66 @@ const ResultsScreen = ({ route, navigation }: Props) => {
             modelName,
             threshold,
           );
+
+          // 🔋 CAPTURAR BATERÍA DESPUÉS
+          const batteryAfter = await getBatteryLevel();
+          const batteryConsumed = batteryBefore - batteryAfter;
+          console.log(
+            `🔋 [ResultsScreen] Batería después: ${batteryAfter.toFixed(
+              1,
+            )}% (Consumido: ${batteryConsumed.toFixed(2)}%)`,
+          );
+
           console.log(
             `✅ [ResultsScreen] Foto ${i + 1} analizada - Detecciones: ${
               result.detections.length
             }, Tiles: ${result.tiles.length}`,
           );
+
+          // Construir PerformanceMetrics completo
+          const performanceMetric: PerformanceMetrics = {
+            analysisId: generateAnalysisId(),
+            timestamp: new Date().toISOString(),
+            device: deviceInfo,
+            model: {
+              name: modelName,
+              threshold: threshold,
+            },
+            image: {
+              width: photo.width,
+              height: photo.height,
+              uri: photo.uri,
+            },
+            performance: {
+              time: {
+                preprocessing: result.metrics.preprocessingTime,
+                tileInference: result.metrics.tileInferenceTimes,
+                totalInference: result.metrics.totalInferenceTime,
+                totalAnalysis: result.metrics.totalAnalysisTime,
+              },
+              memory: {
+                initial: result.metrics.memoryInitial,
+                peak: result.metrics.memoryPeak,
+                final: result.metrics.memoryFinal,
+                delta: result.metrics.memoryPeak - result.metrics.memoryInitial,
+              },
+              battery: {
+                before: batteryBefore,
+                after: batteryAfter,
+                consumed: batteryConsumed,
+                isCharging: charging,
+              },
+            },
+            detections: {
+              total: result.detections.length, // Ya filtradas
+              filtered: result.detections.length,
+              tilesProcessed: result.tiles.length,
+            },
+          };
+
+          // Guardar en historial local
+          await saveToHistory(performanceMetric);
+          allMetrics.push(performanceMetric);
 
           res.push({
             uri: photo.uri,
@@ -124,6 +217,7 @@ const ResultsScreen = ({ route, navigation }: Props) => {
             width: photo.width,
             height: photo.height,
             tiles: result.tiles,
+            metrics: result.metrics,
           });
         }
 
@@ -131,6 +225,7 @@ const ResultsScreen = ({ route, navigation }: Props) => {
           '✅ [ResultsScreen] Todas las fotos analizadas, actualizando estado',
         );
         setResults(res);
+        setPerformanceMetrics(allMetrics);
         setLoading(false);
         console.log('✅ [ResultsScreen] Estado actualizado, análisis completo');
       } catch (error) {
@@ -144,6 +239,30 @@ const ResultsScreen = ({ route, navigation }: Props) => {
     };
     run();
   }, []);
+
+  // Función para exportar métricas individuales
+  const handleExportMetrics = async (index: number) => {
+    try {
+      const metrics = performanceMetrics[index];
+      if (!metrics) {
+        Alert.alert('Error', 'No hay métricas disponibles para exportar');
+        return;
+      }
+
+      // Exportar JSON y CSV
+      const jsonPath = await exportMetricsJSON(metrics);
+      const csvPath = await exportMetricsCSV(metrics);
+
+      Alert.alert(
+        '✅ Métricas Exportadas',
+        `Archivos guardados en:\n\n📄 JSON:\n${jsonPath}\n\n📊 CSV:\n${csvPath}`,
+        [{ text: 'OK' }],
+      );
+    } catch (error) {
+      console.error('❌ [ResultsScreen] Error exportando métricas:', error);
+      Alert.alert('Error', 'No se pudieron exportar las métricas');
+    }
+  };
 
   if (loading)
     return (
@@ -451,7 +570,7 @@ const ResultsScreen = ({ route, navigation }: Props) => {
                 <Text style={styles.modalCloseText}>✕</Text>
               </TouchableOpacity>
             )}
-            renderIndicator={() => null}
+            renderIndicator={() => <></>}
             backgroundColor="rgba(0, 0, 0, 0.95)"
             saveToLocalByLongPress={false}
             renderFooter={() => (
@@ -492,7 +611,7 @@ const ResultsScreen = ({ route, navigation }: Props) => {
                 <Text style={styles.modalCloseText}>✕</Text>
               </TouchableOpacity>
             )}
-            renderIndicator={() => null}
+            renderIndicator={() => <></>}
             backgroundColor="rgba(0, 0, 0, 0.95)"
             saveToLocalByLongPress={false}
             renderFooter={() => (
@@ -523,6 +642,280 @@ const ResultsScreen = ({ route, navigation }: Props) => {
             )}
           />
         )}
+      </Modal>
+
+      {/* Card compacto de métricas (siempre visible) */}
+      {performanceMetrics.length > 0 && (
+        <View style={styles.metricsCard}>
+          <Text style={styles.metricsTitle}>📊 MÉTRICAS DE RENDIMIENTO</Text>
+
+          {performanceMetrics.map((metrics, idx) => {
+            const stats = calculateStats(
+              metrics.performance.time.tileInference,
+            );
+            return (
+              <View key={idx} style={styles.metricsCompact}>
+                <Text style={styles.metricsSubtitle}>Imagen {idx + 1}</Text>
+                <View style={styles.metricsRow}>
+                  <Text style={styles.metricsItem}>
+                    ⏱️ {formatTime(metrics.performance.time.totalAnalysis)}
+                  </Text>
+                  <Text style={styles.metricsItem}>
+                    🔲 {metrics.detections.tilesProcessed} tiles
+                  </Text>
+                </View>
+                <View style={styles.metricsRow}>
+                  <Text style={styles.metricsItem}>
+                    💾 {formatMemory(metrics.performance.memory.peak)}
+                  </Text>
+                  <Text style={styles.metricsItem}>
+                    🔋 -{formatBattery(metrics.performance.battery.consumed)}
+                  </Text>
+                </View>
+                <View style={styles.metricsRow}>
+                  <Text style={styles.metricsItem}>
+                    🎯 {metrics.detections.filtered} detecciones
+                  </Text>
+                  <Text style={styles.metricsItem}>
+                    🤖 {metrics.model.name.toUpperCase()}
+                  </Text>
+                </View>
+
+                <View style={styles.metricsButtons}>
+                  <TouchableOpacity
+                    style={styles.metricsBtn}
+                    onPress={() => {
+                      setSelectedMetricsIndex(idx);
+                      setMetricsModalVisible(true);
+                    }}
+                  >
+                    <Text style={styles.metricsBtnText}>📈 Ver Detalle</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[styles.metricsBtn, styles.metricsBtnExport]}
+                    onPress={() => handleExportMetrics(idx)}
+                  >
+                    <Text style={styles.metricsBtnText}>💾 Exportar</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            );
+          })}
+        </View>
+      )}
+
+      {/* Modal detallado de métricas */}
+      <Modal
+        visible={metricsModalVisible}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setMetricsModalVisible(false)}
+      >
+        <View style={styles.metricsModalContainer}>
+          <View style={styles.metricsModalContent}>
+            {performanceMetrics[selectedMetricsIndex] && (
+              <>
+                <Text style={styles.metricsModalTitle}>
+                  📊 MÉTRICAS DETALLADAS
+                </Text>
+
+                <ScrollView style={styles.metricsModalScroll}>
+                  {(() => {
+                    const m = performanceMetrics[selectedMetricsIndex];
+                    const stats = calculateStats(
+                      m.performance.time.tileInference,
+                    );
+
+                    return (
+                      <>
+                        {/* TIEMPOS */}
+                        <View style={styles.metricsSection}>
+                          <Text style={styles.metricsSectionTitle}>
+                            ⏱️ TIEMPOS
+                          </Text>
+                          <Text style={styles.metricsDetail}>
+                            • Preprocesamiento:{' '}
+                            {formatTime(m.performance.time.preprocessing)}
+                          </Text>
+                          <Text
+                            style={[
+                              styles.metricsDetail,
+                              { fontWeight: 'bold', color: '#15803d' },
+                            ]}
+                          >
+                            ⭐ Inferencia (modelo):{' '}
+                            {formatTime(m.performance.time.totalInference)}
+                          </Text>
+                          <Text style={styles.metricsDetail}>
+                            • Carga de modelo:{' '}
+                            {formatTime(
+                              m.performance.time.totalAnalysis -
+                                m.performance.time.totalInference -
+                                m.performance.time.preprocessing,
+                            )}
+                          </Text>
+                          <Text style={styles.metricsDetail}>
+                            • Tiempo total:{' '}
+                            {formatTime(m.performance.time.totalAnalysis)}
+                          </Text>
+                          <Text style={styles.metricsDetail}>
+                            • Tiles procesados: {m.detections.tilesProcessed}
+                          </Text>
+                          <Text style={styles.metricsDetailSub}>
+                            {' '}
+                            - Promedio por tile: {formatTime(stats.mean)}
+                          </Text>
+                          <Text style={styles.metricsDetailSub}>
+                            {' '}
+                            - Mín/Máx: {formatTime(stats.min)} /{' '}
+                            {formatTime(stats.max)}
+                          </Text>
+                        </View>
+
+                        {/* MEMORIA */}
+                        <View style={styles.metricsSection}>
+                          <Text style={styles.metricsSectionTitle}>
+                            💾 MEMORIA
+                          </Text>
+                          <Text style={styles.metricsDetail}>
+                            • Inicial:{' '}
+                            {formatMemory(m.performance.memory.initial)}
+                          </Text>
+                          <Text
+                            style={[
+                              styles.metricsDetail,
+                              { fontWeight: 'bold', color: '#15803d' },
+                            ]}
+                          >
+                            ⭐ Pico (máxima RAM):{' '}
+                            {formatMemory(m.performance.memory.peak)}
+                          </Text>
+                          <Text style={styles.metricsDetail}>
+                            • Final: {formatMemory(m.performance.memory.final)}
+                          </Text>
+                          <Text style={styles.metricsDetail}>
+                            • Delta: +{formatMemory(m.performance.memory.delta)}
+                          </Text>
+                        </View>
+
+                        {/* BATERÍA */}
+                        <View style={styles.metricsSection}>
+                          <Text style={styles.metricsSectionTitle}>
+                            🔋 BATERÍA
+                          </Text>
+                          <Text style={styles.metricsDetail}>
+                            • Antes:{' '}
+                            {formatBattery(m.performance.battery.before)}
+                          </Text>
+                          <Text style={styles.metricsDetail}>
+                            • Después:{' '}
+                            {formatBattery(m.performance.battery.after)}
+                          </Text>
+                          <Text
+                            style={[
+                              styles.metricsDetail,
+                              {
+                                fontWeight: 'bold',
+                                color: m.performance.battery.isCharging
+                                  ? '#dc2626'
+                                  : '#15803d',
+                              },
+                            ]}
+                          >
+                            {m.performance.battery.isCharging ? '⚠️' : '⭐'}{' '}
+                            Consumido:{' '}
+                            {formatBattery(m.performance.battery.consumed)}
+                          </Text>
+                          <Text style={styles.metricsDetail}>
+                            • Estado:{' '}
+                            {m.performance.battery.isCharging
+                              ? '🔌 Cargando (dato inválido)'
+                              : '🔋 Batería (dato válido)'}
+                          </Text>
+                        </View>
+
+                        {/* DETECCIONES */}
+                        <View style={styles.metricsSection}>
+                          <Text style={styles.metricsSectionTitle}>
+                            🎯 DETECCIONES
+                          </Text>
+                          <Text style={styles.metricsDetail}>
+                            • Total filtradas: {m.detections.filtered}
+                          </Text>
+                          <Text style={styles.metricsDetail}>
+                            • Threshold: {(m.model.threshold * 100).toFixed(0)}%
+                          </Text>
+                        </View>
+
+                        {/* IMAGEN */}
+                        <View style={styles.metricsSection}>
+                          <Text style={styles.metricsSectionTitle}>
+                            📐 IMAGEN
+                          </Text>
+                          <Text style={styles.metricsDetail}>
+                            • Dimensiones: {m.image.width}x{m.image.height}
+                          </Text>
+                          <Text style={styles.metricsDetail}>
+                            • Tiles: {m.detections.tilesProcessed}
+                          </Text>
+                        </View>
+
+                        {/* DISPOSITIVO */}
+                        <View style={styles.metricsSection}>
+                          <Text style={styles.metricsSectionTitle}>
+                            📱 DISPOSITIVO
+                          </Text>
+                          <Text style={styles.metricsDetail}>
+                            • Modelo: {m.device.model}
+                          </Text>
+                          <Text style={styles.metricsDetail}>
+                            • OS: {m.device.os} {m.device.osVersion}
+                          </Text>
+                          <Text style={styles.metricsDetail}>
+                            • YOLO: {m.model.name.toUpperCase()}
+                          </Text>
+                          <Text style={styles.metricsDetail}>
+                            • Timestamp:{' '}
+                            {new Date(m.timestamp).toLocaleString('es-ES')}
+                          </Text>
+                        </View>
+                      </>
+                    );
+                  })()}
+                </ScrollView>
+
+                {/* Botones del modal */}
+                <View style={styles.metricsModalButtons}>
+                  <TouchableOpacity
+                    style={[
+                      styles.metricsModalBtn,
+                      styles.metricsModalBtnExport,
+                    ]}
+                    onPress={() => {
+                      handleExportMetrics(selectedMetricsIndex);
+                      setMetricsModalVisible(false);
+                    }}
+                  >
+                    <Text style={styles.metricsModalBtnText}>
+                      💾 Exportar JSON + CSV
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[
+                      styles.metricsModalBtn,
+                      styles.metricsModalBtnClose,
+                    ]}
+                    onPress={() => setMetricsModalVisible(false)}
+                  >
+                    <Text style={styles.metricsModalBtnText}>Cerrar</Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            )}
+          </View>
+        </View>
       </Modal>
 
       <TouchableOpacity
@@ -643,6 +1036,138 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     opacity: 0.8,
     paddingHorizontal: 20,
+  },
+
+  // Estilos para card de métricas
+  metricsCard: {
+    backgroundColor: '#ffffff',
+    margin: 15,
+    padding: 20,
+    borderRadius: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  metricsTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#15803d',
+    marginBottom: 15,
+    textAlign: 'center',
+  },
+  metricsCompact: {
+    marginBottom: 20,
+    paddingBottom: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e2e8f0',
+  },
+  metricsSubtitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#334155',
+    marginBottom: 10,
+  },
+  metricsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  metricsItem: {
+    fontSize: 14,
+    color: '#475569',
+  },
+  metricsButtons: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 15,
+  },
+  metricsBtn: {
+    flex: 1,
+    backgroundColor: '#15803d',
+    padding: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  metricsBtnExport: {
+    backgroundColor: '#0369a1',
+  },
+  metricsBtnText: {
+    color: '#ffffff',
+    fontWeight: '600',
+    fontSize: 14,
+  },
+
+  // Estilos para modal de métricas
+  metricsModalContainer: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  metricsModalContent: {
+    backgroundColor: '#ffffff',
+    borderRadius: 16,
+    width: '100%',
+    maxHeight: '90%',
+    padding: 20,
+  },
+  metricsModalTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#15803d',
+    textAlign: 'center',
+    marginBottom: 20,
+  },
+  metricsModalScroll: {
+    maxHeight: 500,
+  },
+  metricsSection: {
+    marginBottom: 20,
+    paddingBottom: 15,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e2e8f0',
+  },
+  metricsSectionTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#334155',
+    marginBottom: 10,
+  },
+  metricsDetail: {
+    fontSize: 14,
+    color: '#475569',
+    marginBottom: 5,
+    lineHeight: 20,
+  },
+  metricsDetailSub: {
+    fontSize: 13,
+    color: '#64748b',
+    marginBottom: 3,
+    lineHeight: 18,
+  },
+  metricsModalButtons: {
+    flexDirection: 'column',
+    gap: 10,
+    marginTop: 20,
+  },
+  metricsModalBtn: {
+    padding: 15,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  metricsModalBtnExport: {
+    backgroundColor: '#0369a1',
+  },
+  metricsModalBtnClose: {
+    backgroundColor: '#64748b',
+  },
+  metricsModalBtnText: {
+    color: '#ffffff',
+    fontWeight: '600',
+    fontSize: 16,
   },
 });
 

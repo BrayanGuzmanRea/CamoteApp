@@ -1,6 +1,7 @@
 import { Alert } from 'react-native';
 import { loadTensorflowModel, TensorflowModel } from 'react-native-fast-tflite';
 import { ImageTile, processImageTiling } from './ImageProcessor';
+import { getMemoryUsage } from './PerformanceMonitor';
 import { imageRegionToTensor, parseYoloOutput } from './TensorConverter';
 
 export interface Detection {
@@ -9,9 +10,20 @@ export interface Detection {
   box: { x: number; y: number; width: number; height: number };
 }
 
+export interface AnalysisMetrics {
+  preprocessingTime: number; // ms
+  tileInferenceTimes: number[]; // ms por cada tile
+  totalInferenceTime: number; // ms total
+  totalAnalysisTime: number; // ms desde inicio
+  memoryInitial: number; // MB
+  memoryPeak: number; // MB
+  memoryFinal: number; // MB
+}
+
 export interface AnalysisResult {
   detections: Detection[];
   tiles: ImageTile[];
+  metrics: AnalysisMetrics;
 }
 
 // Umbral de confianza por defecto (puede ser sobrescrito al llamar analyzeImage)
@@ -89,7 +101,7 @@ export const loadYoloModel = async (modelName: 'yolov8' | 'yolov11') => {
   }
 };
 
-// MODIFICADO: Recibe width y height, retorna detecciones y tiles
+// MODIFICADO: Recibe width y height, retorna detecciones, tiles Y MÉTRICAS
 export const analyzeImage = async (
   imageUri: string,
   width: number,
@@ -97,20 +109,45 @@ export const analyzeImage = async (
   modelName: 'yolov8' | 'yolov11',
   confidenceThreshold: number = DEFAULT_CONFIDENCE_THRESHOLD,
 ): Promise<AnalysisResult> => {
+  // ⏱️ INICIO: Timer total del análisis
+  const analysisStartTime = performance.now();
+
+  // 💾 INICIO: Capturar memoria inicial
+  const memoryInitial = await getMemoryUsage();
+  let memoryPeak = memoryInitial;
+
   try {
     console.log(`🔵 [YoloService] analyzeImage() iniciado`);
     console.log(`🔵 [YoloService] URI: ${imageUri}`);
     console.log(`🔵 [YoloService] Dimensiones: ${width}x${height}`);
     console.log(`🔵 [YoloService] Modelo: ${modelName}`);
     console.log(`🔵 [YoloService] Threshold: ${confidenceThreshold}`);
+    console.log(
+      `📊 [YoloService] Memoria inicial: ${memoryInitial.toFixed(1)} MB`,
+    );
 
     console.log(`🔵 [YoloService] Paso 1: Cargando modelo...`);
     const model = await loadYoloModel(modelName);
     if (!model) {
       console.error('❌ [YoloService] El modelo no se cargó correctamente');
-      return { detections: [], tiles: [] };
+      return {
+        detections: [],
+        tiles: [],
+        metrics: {
+          preprocessingTime: 0,
+          tileInferenceTimes: [],
+          totalInferenceTime: 0,
+          totalAnalysisTime: 0,
+          memoryInitial: 0,
+          memoryPeak: 0,
+          memoryFinal: 0,
+        },
+      };
     }
     console.log('✅ [YoloService] Modelo cargado exitosamente');
+
+    // ⏱️ Timer preprocesamiento
+    const preprocessingStartTime = performance.now();
 
     // Pasamos dimensiones explícitas (Evita crash de memoria)
     console.log(`🔵 [YoloService] Paso 2: Procesando tiling de imagen...`);
@@ -118,11 +155,16 @@ export const analyzeImage = async (
       `🔵 [YoloService] Llamando a processImageTiling(${imageUri}, ${width}, ${height})...`,
     );
     const tiles = await processImageTiling(imageUri, width, height);
+
+    const preprocessingTime = performance.now() - preprocessingStartTime;
     console.log(
-      `✅ [YoloService] Tiling completado - ${tiles.length} tiles generados`,
+      `✅ [YoloService] Tiling completado - ${
+        tiles.length
+      } tiles generados (${preprocessingTime.toFixed(0)} ms)`,
     );
 
     const allDetections: Detection[] = [];
+    const tileInferenceTimes: number[] = [];
     console.log(
       `🚀 [YoloService] Paso 3: Analizando ${tiles.length} tiles con ${modelName}...`,
     );
@@ -141,7 +183,7 @@ export const analyzeImage = async (
         console.log(
           `🔵 [YoloService] Convirtiendo región de imagen a tensor...`,
         );
-        const tensorInput = await imageRegionToTensor(
+        let tensorInput: Float32Array | null = await imageRegionToTensor(
           tile.uri,
           tile.x,
           tile.y,
@@ -152,12 +194,32 @@ export const analyzeImage = async (
           `✅ [YoloService] Tensor generado: ${tensorInput.length} elementos`,
         );
 
+        // ⏱️ Timer inferencia de este tile
+        const tileStartTime = performance.now();
+
         console.log(
           `🔵 [YoloService] Ejecutando inferencia en tile ${i + 1}...`,
         );
         const output = await model.run([tensorInput]);
-        console.log(`✅ [YoloService] Tile ${i + 1} procesado`);
+
+        // 🧹 CRÍTICO: Limpiar tensor inmediatamente después de inferencia
+        tensorInput = null;
+
+        const tileInferenceTime = performance.now() - tileStartTime;
+        tileInferenceTimes.push(tileInferenceTime);
+
+        console.log(
+          `✅ [YoloService] Tile ${
+            i + 1
+          } procesado (${tileInferenceTime.toFixed(0)} ms)`,
+        );
         console.log(`📊 [YoloService] Output shape:`, output?.length || 'N/A');
+
+        // 💾 Actualizar memoria pico
+        const currentMemory = await getMemoryUsage();
+        if (currentMemory > memoryPeak) {
+          memoryPeak = currentMemory;
+        }
 
         // ✅ PARSEAR OUTPUT REAL DE YOLO
         if (output && output.length > 0) {
@@ -217,10 +279,61 @@ export const analyzeImage = async (
       `🎯 [YoloService] Detecciones filtradas (score >= ${confidenceThreshold}): ${filteredDetections.length}`,
     );
 
-    return { detections: filteredDetections, tiles };
+    // ⏱️ FIN: Tiempo total de análisis
+    const totalAnalysisTime = performance.now() - analysisStartTime;
+    const totalInferenceTime = tileInferenceTimes.reduce((a, b) => a + b, 0);
+
+    // 💾 FIN: Memoria final
+    const memoryFinal = await getMemoryUsage();
+
+    // 📊 Construir métricas
+    const metrics: AnalysisMetrics = {
+      preprocessingTime: Math.round(preprocessingTime * 100) / 100,
+      tileInferenceTimes: tileInferenceTimes.map(
+        t => Math.round(t * 100) / 100,
+      ),
+      totalInferenceTime: Math.round(totalInferenceTime * 100) / 100,
+      totalAnalysisTime: Math.round(totalAnalysisTime * 100) / 100,
+      memoryInitial: Math.round(memoryInitial * 100) / 100,
+      memoryPeak: Math.round(memoryPeak * 100) / 100,
+      memoryFinal: Math.round(memoryFinal * 100) / 100,
+    };
+
+    console.log('📊 [YoloService] MÉTRICAS DE RENDIMIENTO:');
+    console.log(`   ⏱️ Preprocesamiento: ${metrics.preprocessingTime} ms`);
+    console.log(`   ⏱️ Inferencia total: ${metrics.totalInferenceTime} ms`);
+    console.log(`   ⏱️ Análisis total: ${metrics.totalAnalysisTime} ms`);
+    console.log(`   💾 Memoria inicial: ${metrics.memoryInitial} MB`);
+    console.log(`   💾 Memoria pico: ${metrics.memoryPeak} MB`);
+    console.log(`   💾 Memoria final: ${metrics.memoryFinal} MB`);
+    console.log(
+      `   💾 Delta memoria: ${(
+        metrics.memoryPeak - metrics.memoryInitial
+      ).toFixed(1)} MB`,
+    );
+
+    // 🧹 SUGERENCIA: Forzar garbage collection (solo en desarrollo)
+    if (__DEV__ && global.gc) {
+      global.gc();
+      console.log('🧹 [YoloService] Garbage collection ejecutado');
+    }
+
+    return { detections: filteredDetections, tiles, metrics };
   } catch (error) {
     console.error('❌ [YoloService] ERROR CRÍTICO en analyzeImage():', error);
     console.error('❌ [YoloService] Stack trace:', (error as Error).stack);
-    return { detections: [], tiles: [] };
+    return {
+      detections: [],
+      tiles: [],
+      metrics: {
+        preprocessingTime: 0,
+        tileInferenceTimes: [],
+        totalInferenceTime: 0,
+        totalAnalysisTime: 0,
+        memoryInitial: 0,
+        memoryPeak: 0,
+        memoryFinal: 0,
+      },
+    };
   }
 };

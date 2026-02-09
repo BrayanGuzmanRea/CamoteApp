@@ -1,5 +1,6 @@
 import ImageResizer from '@bam.tech/react-native-image-resizer';
 import ImageEditor from '@react-native-community/image-editor';
+import RNFS from 'react-native-fs';
 import ImagePixelModule from './NativeModules';
 
 /**
@@ -20,6 +21,9 @@ export const imageRegionToTensor = async (
   width: number,
   height: number,
 ): Promise<Float32Array> => {
+  let croppedUri: string | null = null;
+  let finalUri: string | null = null;
+
   try {
     console.log(
       `🔵 [TensorConverter] Convirtiendo región a tensor (VERSIÓN REAL)...`,
@@ -39,12 +43,11 @@ export const imageRegionToTensor = async (
     });
 
     // Extraer URI del resultado (puede ser objeto o string según versión)
-    const croppedUri =
-      typeof cropResult === 'string' ? cropResult : cropResult.uri;
+    croppedUri = typeof cropResult === 'string' ? cropResult : cropResult.uri;
     console.log(`✅ [TensorConverter] Región recortada: ${croppedUri}`);
+    finalUri = croppedUri;
 
     // Paso 2: Asegurar que es exactamente 1280x1280
-    let finalUri = croppedUri;
     if (width !== 1280 || height !== 1280) {
       console.log(`🔵 [TensorConverter] Redimensionando a 1280x1280...`);
       const resized = await ImageResizer.createResizedImage(
@@ -55,6 +58,8 @@ export const imageRegionToTensor = async (
         100, // Calidad máxima
         0, // Sin rotación
       );
+      // 🧹 Limpiar imagen recortada temporal
+      await RNFS.unlink(croppedUri).catch(() => {});
       finalUri = resized.uri;
       console.log(`✅ [TensorConverter] Redimensionado: ${finalUri}`);
     }
@@ -64,17 +69,29 @@ export const imageRegionToTensor = async (
       `🔵 [TensorConverter] Extrayendo píxeles RGB con módulo nativo...`,
     );
 
-    const pixelsArray = await ImagePixelModule.getImagePixels(
+    // 🧹 OPTIMIZACIÓN CRÍTICA: Módulo nativo retorna FILE PATH, no array
+    // Esto evita std::bad_alloc en React Native bridge (4.9M elementos)
+    const binFilePath = await ImagePixelModule.getImagePixels(
       finalUri,
       1280,
       1280,
     );
     console.log(
-      `✅ [TensorConverter] Píxeles extraídos: ${pixelsArray.length} valores`,
+      `✅ [TensorConverter] Archivo binario generado: ${binFilePath}`,
     );
 
-    // Convertir a Float32Array
-    const tensor = new Float32Array(pixelsArray);
+    // Leer archivo binario como base64
+    const base64Data = await RNFS.readFile(binFilePath, 'base64');
+
+    // Decodificar base64 a Uint8Array
+    const binaryString = atob(base64Data);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+
+    // Convertir a Float32Array (interpreta bytes como floats)
+    const tensor = new Float32Array(bytes.buffer);
 
     console.log(
       `✅ [TensorConverter] Tensor generado: ${tensor.length} elementos`,
@@ -83,6 +100,22 @@ export const imageRegionToTensor = async (
       `🎯 [TensorConverter] ¡TENSOR REAL! Píxeles extraídos directamente de la imagen`,
     );
 
+    // 🧹 CRÍTICO: Limpiar archivos temporales (binario + imagen)
+    await RNFS.unlink(binFilePath).catch(err => {
+      console.warn(
+        `⚠️ [TensorConverter] No se pudo eliminar binario: ${err.message}`,
+      );
+    });
+
+    if (finalUri && finalUri.includes('cache')) {
+      await RNFS.unlink(finalUri).catch(err => {
+        console.warn(
+          `⚠️ [TensorConverter] No se pudo eliminar temp: ${err.message}`,
+        );
+      });
+      console.log('🧹 [TensorConverter] Archivos temporales eliminados');
+    }
+
     return tensor;
   } catch (error) {
     console.error(
@@ -90,6 +123,15 @@ export const imageRegionToTensor = async (
       error,
     );
     console.error('❌ [TensorConverter] Stack:', (error as Error).stack);
+
+    // 🧹 Limpiar archivos temporales en caso de error
+    if (croppedUri) {
+      await RNFS.unlink(croppedUri).catch(() => {});
+    }
+    if (finalUri && finalUri !== croppedUri) {
+      await RNFS.unlink(finalUri).catch(() => {});
+    }
+
     throw error;
   }
 };
@@ -157,8 +199,8 @@ export const parseYoloOutput = (
 
   // DEBUG: Inspeccionar primeros valores del tensor
   console.log(`🔍 [YoloParser] DEBUG - Primeros 25 valores del output:`);
-  const sample = Array.from(outputTensor.slice(0, 25));
-  console.log(`   [${sample.map(v => v.toFixed(3)).join(', ')}]`);
+  const sample = Array.from(outputTensor.slice(0, 25)) as number[];
+  console.log(`   [${sample.map(val => val.toFixed(3)).join(', ')}]`);
 
   // YOLOv8/v11 usa formato TRANSPUESTO: [X1, X2, ..., Y1, Y2, ..., W1, W2, ..., H1, H2, ..., C1, C2, ..., ID1, ID2, ...]
   // Con 6 atributos: [33600 Xs, 33600 Ys, 33600 Ws, 33600 Hs, 33600 Confs, 33600 ClassIDs]

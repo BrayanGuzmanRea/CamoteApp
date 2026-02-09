@@ -16,22 +16,26 @@ interface ImagePixelModuleInterface {
   /**
    * Extrae píxeles RGB normalizados de una imagen
    *
+   * OPTIMIZADO: Retorna path de archivo binario en lugar de array
+   * para evitar std::bad_alloc en React Native bridge
+   *
    * @param imageUri URI de la imagen (file://, content://, etc.)
    * @param targetWidth Ancho objetivo en píxeles
    * @param targetHeight Alto objetivo en píxeles
-   * @returns Promise<number[]> - Array de píxeles normalizados [0.0 - 1.0]
-   *          Formato: [R, G, B, R, G, B, ...] para cada píxel
-   *          Tamaño: targetWidth * targetHeight * 3
+   * @returns Promise<string> - Path absoluto del archivo .bin con píxeles
+   *          Formato: Float32 binario (little-endian)
+   *          Tamaño archivo: targetWidth * targetHeight * 3 * 4 bytes
    *
    * @example
-   * const pixels = await ImagePixelModule.getImagePixels('file:///path/image.jpg', 1280, 1280);
-   * const tensor = new Float32Array(pixels);
+   * const binPath = await ImagePixelModule.getImagePixels('file:///path/image.jpg', 1280, 1280);
+   * const buffer = await RNFS.readFile(binPath, 'base64');
+   * const tensor = new Float32Array(Uint8Array.from(atob(buffer), c => c.charCodeAt(0)).buffer);
    */
   getImagePixels(
     imageUri: string,
     targetWidth: number,
     targetHeight: number,
-  ): Promise<number[]>;
+  ): Promise<string>;
 
   /**
    * Obtiene estadísticas de una imagen (para debugging)
