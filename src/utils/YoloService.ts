@@ -1,6 +1,10 @@
 import { Alert } from 'react-native';
 import { loadTensorflowModel, TensorflowModel } from 'react-native-fast-tflite';
-import { ImageTile, processImageTiling } from './ImageProcessor';
+import {
+  getActualImageDimensions,
+  ImageTile,
+  processImageTiling,
+} from './ImageProcessor';
 import { getMemoryUsage } from './PerformanceMonitor';
 import { imageRegionToTensor, parseYoloOutput } from './TensorConverter';
 
@@ -24,6 +28,10 @@ export interface AnalysisResult {
   detections: Detection[];
   tiles: ImageTile[];
   metrics: AnalysisMetrics;
+  actualDimensions: {
+    width: number; // Dimensiones REALES del BitmapRegionDecoder
+    height: number; // Usadas para calcular grid y detecciones
+  };
 }
 
 // Umbral de confianza por defecto (puede ser sobrescrito al llamar analyzeImage)
@@ -142,6 +150,10 @@ export const analyzeImage = async (
           memoryPeak: 0,
           memoryFinal: 0,
         },
+        actualDimensions: {
+          width: width,
+          height: height,
+        },
       };
     }
     console.log('✅ [YoloService] Modelo cargado exitosamente');
@@ -149,12 +161,39 @@ export const analyzeImage = async (
     // ⏱️ Timer preprocesamiento
     const preprocessingStartTime = performance.now();
 
-    // Pasamos dimensiones explícitas (Evita crash de memoria)
-    console.log(`🔵 [YoloService] Paso 2: Procesando tiling de imagen...`);
+    // 📏 PASO CRÍTICO: Obtener dimensiones REALES desde BitmapRegionDecoder
     console.log(
-      `🔵 [YoloService] Llamando a processImageTiling(${imageUri}, ${width}, ${height})...`,
+      `📏 [YoloService] Paso 2a: Obteniendo dimensiones REALES de la imagen...`,
     );
-    const tiles = await processImageTiling(imageUri, width, height);
+    console.log(
+      `📏 [YoloService] Dimensiones del ImagePicker: ${width}x${height}`,
+    );
+
+    const actualDimensions = await getActualImageDimensions(imageUri);
+    const actualWidth = actualDimensions.width;
+    const actualHeight = actualDimensions.height;
+
+    console.log(
+      `📏 [YoloService] Dimensiones REALES del BitmapRegionDecoder: ${actualWidth}x${actualHeight}`,
+    );
+
+    // ⚠️ VALIDACIÓN: Detectar si las dimensiones están invertidas
+    if (actualWidth !== width || actualHeight !== height) {
+      console.warn(`⚠️ [YoloService] ¡DIMENSIONES DIFERENTES DETECTADAS!`);
+      console.warn(`   ImagePicker reportó: ${width}x${height}`);
+      console.warn(`   Archivo REAL contiene: ${actualWidth}x${actualHeight}`);
+      console.warn(`   Posible causa: EXIF orientation`);
+      console.warn(`   ✅ Usando dimensiones REALES para calcular grilla`);
+    }
+
+    // Pasamos dimensiones REALES (Evita crash de memoria y tiles fuera de bounds)
+    console.log(
+      `🔵 [YoloService] Paso 2b: Procesando tiling de imagen con dimensiones REALES...`,
+    );
+    console.log(
+      `🔵 [YoloService] Llamando a processImageTiling(${imageUri}, ${actualWidth}, ${actualHeight})...`,
+    );
+    const tiles = await processImageTiling(imageUri, actualWidth, actualHeight);
 
     const preprocessingTime = performance.now() - preprocessingStartTime;
     console.log(
@@ -318,7 +357,15 @@ export const analyzeImage = async (
       console.log('🧹 [YoloService] Garbage collection ejecutado');
     }
 
-    return { detections: filteredDetections, tiles, metrics };
+    return {
+      detections: filteredDetections,
+      tiles,
+      metrics,
+      actualDimensions: {
+        width: actualWidth,
+        height: actualHeight,
+      },
+    };
   } catch (error) {
     console.error('❌ [YoloService] ERROR CRÍTICO en analyzeImage():', error);
     console.error('❌ [YoloService] Stack trace:', (error as Error).stack);
@@ -333,6 +380,10 @@ export const analyzeImage = async (
         memoryInitial: 0,
         memoryPeak: 0,
         memoryFinal: 0,
+      },
+      actualDimensions: {
+        width: width,
+        height: height,
       },
     };
   }

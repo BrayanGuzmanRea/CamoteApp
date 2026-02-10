@@ -47,8 +47,10 @@ const ResultsScreen = ({ route, navigation }: Props) => {
     {
       uri: string;
       detections: Detection[];
-      width: number;
+      width: number; // Dimensiones del ImagePicker (para display)
       height: number;
+      actualWidth: number; // Dimensiones REALES (para coordenadas)
+      actualHeight: number;
       tiles: ImageTile[];
       metrics: AnalysisMetrics;
     }[]
@@ -60,12 +62,16 @@ const ResultsScreen = ({ route, navigation }: Props) => {
     tile: ImageTile;
     photoWidth: number;
     photoHeight: number;
+    actualWidth: number; // REAL dimensions
+    actualHeight: number;
   } | null>(null);
   const [selectedMainImage, setSelectedMainImage] = useState<{
     uri: string;
     detections: Detection[];
     width: number;
     height: number;
+    actualWidth: number; // REAL dimensions
+    actualHeight: number;
   } | null>(null);
   const viewShotRefs = useRef<(ViewShot | null)[]>([]);
 
@@ -92,6 +98,8 @@ const ResultsScreen = ({ route, navigation }: Props) => {
             detections: item.detections,
             width: item.width,
             height: item.height,
+            actualWidth: item.actualWidth,
+            actualHeight: item.actualHeight,
           });
         }
       }
@@ -103,6 +111,8 @@ const ResultsScreen = ({ route, navigation }: Props) => {
         detections: item.detections,
         width: item.width,
         height: item.height,
+        actualWidth: item.actualWidth,
+        actualHeight: item.actualHeight,
       });
     }
   };
@@ -214,8 +224,10 @@ const ResultsScreen = ({ route, navigation }: Props) => {
           res.push({
             uri: photo.uri,
             detections: result.detections,
-            width: photo.width,
+            width: photo.width, // ImagePicker dimensions (display)
             height: photo.height,
+            actualWidth: result.actualDimensions.width, // REAL dimensions (coords)
+            actualHeight: result.actualDimensions.height,
             tiles: result.tiles,
             metrics: result.metrics,
           });
@@ -304,11 +316,15 @@ const ResultsScreen = ({ route, navigation }: Props) => {
           offsetY = 0;
         }
 
-        // Factor de escala de coordenadas originales a renderizadas
-        const scale = renderedWidth / item.width;
+        // ✅ CRÍTICO: Usar dimensiones REALES para escalar coordenadas de detección
+        // Las detecciones están en el espacio de actualWidth×actualHeight (BitmapRegionDecoder)
+        const scale = renderedWidth / item.actualWidth;
 
         console.log(`📊 [ResultsScreen] Imagen ${idx + 1}:`);
-        console.log(`   Original: ${item.width}x${item.height}`);
+        console.log(`   ImagePicker: ${item.width}x${item.height}`);
+        console.log(
+          `   Dimensiones REALES: ${item.actualWidth}x${item.actualHeight}`,
+        );
         console.log(
           `   Renderizada: ${renderedWidth.toFixed(1)}x${renderedHeight.toFixed(
             1,
@@ -456,6 +472,8 @@ const ResultsScreen = ({ route, navigation }: Props) => {
                           tile,
                           photoWidth: item.width,
                           photoHeight: item.height,
+                          actualWidth: item.actualWidth,
+                          actualHeight: item.actualHeight,
                         })
                       }
                       style={[
@@ -475,8 +493,8 @@ const ResultsScreen = ({ route, navigation }: Props) => {
                             // Desplazar la imagen para mostrar solo la región del tile
                             marginLeft: -tile.x * tileScale,
                             marginTop: -tile.y * tileScale,
-                            width: item.width * tileScale,
-                            height: item.height * tileScale,
+                            width: item.actualWidth * tileScale,
+                            height: item.actualHeight * tileScale,
                           }}
                         >
                           {/* Marco del tile para referencia visual */}

@@ -1,18 +1,19 @@
-import ImageResizer from '@bam.tech/react-native-image-resizer';
-import ImageEditor from '@react-native-community/image-editor';
 import RNFS from 'react-native-fs';
 import ImagePixelModule from './NativeModules';
 
 /**
  * Convierte una región de imagen a tensor Float32Array normalizado para YOLO
  *
- * ESTRATEGIA (VERSIÓN REAL):
- * 1. Recortar región específica con ImageEditor
- * 2. Redimensionar a 1280x1280 si es necesario
- * 3. Extraer píxeles RGB con módulo nativo
- * 4. Retornar tensor normalizado [0.0 - 1.0]
+ * ESTRATEGIA OPTIMIZADA (v2.0 - BitmapRegionDecoder):
+ * 1. Llamar directamente al módulo nativo con coordenadas de región
+ * 2. Módulo nativo carga SOLO la región 1280×1280 (NO imagen completa)
+ * 3. Retornar tensor normalizado [0.0 - 1.0]
  *
- * ✅ IMPLEMENTACIÓN REAL: Usa módulo nativo para acceso directo a píxeles
+ * ✅ VENTAJAS vs versión anterior:
+ * - Elimina OutOfMemory en imágenes grandes (8160×6144+)
+ * - Memoria constante ~6.5 MB por tile (vs ~150 MB anterior)
+ * - Sin archivos temporales intermedios (crop, resize)
+ * - Más rápido (elimina 2 operaciones I/O)
  */
 export const imageRegionToTensor = async (
   imageUri: string,
@@ -21,60 +22,28 @@ export const imageRegionToTensor = async (
   width: number,
   height: number,
 ): Promise<Float32Array> => {
-  let croppedUri: string | null = null;
-  let finalUri: string | null = null;
-
   try {
     console.log(
-      `🔵 [TensorConverter] Convirtiendo región a tensor (VERSIÓN REAL)...`,
+      `🔵 [TensorConverter] Convirtiendo región a tensor (OPTIMIZADO v2.0)...`,
     );
     console.log(`🔵 [TensorConverter] URI: ${imageUri}`);
     console.log(
       `🔵 [TensorConverter] Región: (${x}, ${y}) - ${width}x${height}`,
     );
 
-    // Paso 1: Recortar región específica
-    console.log(`🔵 [TensorConverter] Recortando región con ImageEditor...`);
-    const cropResult = await ImageEditor.cropImage(imageUri, {
-      offset: { x, y },
-      size: { width, height },
-      displaySize: { width, height },
-      resizeMode: 'contain',
-    });
-
-    // Extraer URI del resultado (puede ser objeto o string según versión)
-    croppedUri = typeof cropResult === 'string' ? cropResult : cropResult.uri;
-    console.log(`✅ [TensorConverter] Región recortada: ${croppedUri}`);
-    finalUri = croppedUri;
-
-    // Paso 2: Asegurar que es exactamente 1280x1280
-    if (width !== 1280 || height !== 1280) {
-      console.log(`🔵 [TensorConverter] Redimensionando a 1280x1280...`);
-      const resized = await ImageResizer.createResizedImage(
-        croppedUri,
-        1280,
-        1280,
-        'PNG',
-        100, // Calidad máxima
-        0, // Sin rotación
-      );
-      // 🧹 Limpiar imagen recortada temporal
-      await RNFS.unlink(croppedUri).catch(() => {});
-      finalUri = resized.uri;
-      console.log(`✅ [TensorConverter] Redimensionado: ${finalUri}`);
-    }
-
-    // Paso 3: Extraer píxeles RGB con módulo nativo
+    // 🚀 PASO ÚNICO: Extraer píxeles de región directamente desde imagen original
     console.log(
-      `🔵 [TensorConverter] Extrayendo píxeles RGB con módulo nativo...`,
+      `🔵 [TensorConverter] Cargando región con BitmapRegionDecoder nativo...`,
     );
 
-    // 🧹 OPTIMIZACIÓN CRÍTICA: Módulo nativo retorna FILE PATH, no array
-    // Esto evita std::bad_alloc en React Native bridge (4.9M elementos)
-    const binFilePath = await ImagePixelModule.getImagePixels(
-      finalUri,
-      1280,
-      1280,
+    // Módulo nativo usa BitmapRegionDecoder para cargar SOLO esta región
+    // NO carga la imagen completa → Memoria constante independiente del tamaño original
+    const binFilePath = await ImagePixelModule.getImageRegionPixels(
+      imageUri,
+      x,
+      y,
+      width,
+      height,
     );
     console.log(
       `✅ [TensorConverter] Archivo binario generado: ${binFilePath}`,
@@ -97,40 +66,23 @@ export const imageRegionToTensor = async (
       `✅ [TensorConverter] Tensor generado: ${tensor.length} elementos`,
     );
     console.log(
-      `🎯 [TensorConverter] ¡TENSOR REAL! Píxeles extraídos directamente de la imagen`,
+      `🎯 [TensorConverter] ¡Región cargada sin cargar imagen completa!`,
     );
 
-    // 🧹 CRÍTICO: Limpiar archivos temporales (binario + imagen)
+    // 🧹 Limpiar archivo binario temporal
     await RNFS.unlink(binFilePath).catch(err => {
       console.warn(
         `⚠️ [TensorConverter] No se pudo eliminar binario: ${err.message}`,
       );
     });
 
-    if (finalUri && finalUri.includes('cache')) {
-      await RNFS.unlink(finalUri).catch(err => {
-        console.warn(
-          `⚠️ [TensorConverter] No se pudo eliminar temp: ${err.message}`,
-        );
-      });
-      console.log('🧹 [TensorConverter] Archivos temporales eliminados');
-    }
-
     return tensor;
   } catch (error) {
     console.error(
-      '❌ [TensorConverter] ERROR al convertir imagen a tensor:',
+      '❌ [TensorConverter] ERROR al convertir región a tensor:',
       error,
     );
     console.error('❌ [TensorConverter] Stack:', (error as Error).stack);
-
-    // 🧹 Limpiar archivos temporales en caso de error
-    if (croppedUri) {
-      await RNFS.unlink(croppedUri).catch(() => {});
-    }
-    if (finalUri && finalUri !== croppedUri) {
-      await RNFS.unlink(finalUri).catch(() => {});
-    }
 
     throw error;
   }

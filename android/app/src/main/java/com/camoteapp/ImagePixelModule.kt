@@ -2,10 +2,13 @@ package com.camoteapp
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.BitmapRegionDecoder
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Rect
 import android.net.Uri
+import android.util.Log
 import com.facebook.react.bridge.*
 import java.io.File
 import java.io.FileInputStream
@@ -25,6 +28,10 @@ import kotlin.math.min
  * @version 1.0.0
  */
 class ImagePixelModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaModule(reactContext) {
+
+    companion object {
+        private const val TAG = "ImagePixelModule"
+    }
 
     override fun getName(): String {
         return "ImagePixelModule"
@@ -94,6 +101,221 @@ class ImagePixelModule(reactContext: ReactApplicationContext) : ReactContextBase
 
         } catch (e: Exception) {
             promise.reject("PIXEL_EXTRACTION_ERROR", "Error extracting pixels: ${e.message}", e)
+        }
+    }
+
+    /**
+     * 🚀 OPTIMIZACIÓN CRÍTICA: Extrae píxeles de REGIÓN específica sin cargar imagen completa
+     * 
+     * Usa BitmapRegionDecoder para cargar SOLO la región necesaria (1280×1280)
+     * en lugar de cargar la imagen completa (ej: 8160×6144) y recortarla.
+     * 
+     * BENEFICIO: Memoria constante ~20 MB por tile vs ~150 MB anterior
+     * 
+     * @param imageUri URI de la imagen fuente
+     * @param x Coordenada X del recorte
+     * @param y Coordenada Y del recorte
+     * @param width Ancho de la región (típicamente 1280)
+     * @param height Alto de la región (típicamente 1280)
+     * @param promise Promise que retorna URI del archivo .bin con píxeles
+     */
+    @ReactMethod
+    fun getImageRegionPixels(
+        imageUri: String,
+        x: Int,
+        y: Int,
+        width: Int,
+        height: Int,
+        promise: Promise
+    ) {
+        try {
+            // Validar parámetros
+            if (width <= 0 || height <= 0) {
+                promise.reject("INVALID_DIMENSIONS", "Width and height must be positive")
+                return
+            }
+            if (x < 0 || y < 0) {
+                promise.reject("INVALID_COORDINATES", "Coordinates must be non-negative")
+                return
+            }
+
+            // Cargar SOLO la región específica (no imagen completa)
+            val bitmap = loadBitmapRegion(imageUri, x, y, width, height)
+            if (bitmap == null) {
+                promise.reject("REGION_LOAD_ERROR", "Failed to load image region")
+                return
+            }
+
+            // Extraer píxeles normalizados
+            val pixels = extractNormalizedPixels(bitmap)
+            bitmap.recycle()
+
+            // Guardar en archivo binario (evita std::bad_alloc)
+            val tempFile = File.createTempFile("tensor_pixels_", ".bin", reactApplicationContext.cacheDir)
+            FileOutputStream(tempFile).use { fos ->
+                val buffer = ByteBuffer.allocate(pixels.size * 4)
+                buffer.order(ByteOrder.LITTLE_ENDIAN)
+                for (pixel in pixels) {
+                    buffer.putFloat(pixel)
+                }
+                fos.write(buffer.array())
+            }
+
+            promise.resolve(tempFile.absolutePath)
+
+        } catch (e: Exception) {
+            promise.reject("REGION_PIXEL_ERROR", "Error extracting region pixels: ${e.message}", e)
+        }
+    }
+
+    /**
+     * � Obtiene las dimensiones REALES de la imagen sin cargarla en memoria
+     * 
+     * VENTAJA: Lee solo el header del archivo, consumo de memoria mínimo
+     * Útil para obtener dimensiones antes de calcular tiling
+     * 
+     * @param imageUri URI de la imagen
+     * @param promise Promise que retorna { width: number, height: number }
+     */
+    @ReactMethod
+    fun getImageDimensions(imageUri: String, promise: Promise) {
+        try {
+            val cleanUri = imageUri.replace("file://", "")
+            val file = File(cleanUri)
+            
+            if (!file.exists()) {
+                promise.reject("FILE_NOT_FOUND", "File does not exist: $cleanUri")
+                return
+            }
+
+            val inputStream = FileInputStream(file)
+            val decoder = BitmapRegionDecoder.newInstance(inputStream, false)
+                ?: run {
+                    promise.reject("DECODER_ERROR", "Failed to create BitmapRegionDecoder")
+                    return
+                }
+
+            val width = decoder.width
+            val height = decoder.height
+            
+            val dimensions = Arguments.createMap()
+            dimensions.putInt("width", width)
+            dimensions.putInt("height", height)
+            
+            decoder.recycle()
+            inputStream.close()
+            
+            Log.d(TAG, "✅ [getImageDimensions] Image dimensions: ${width}x${height}")
+            promise.resolve(dimensions)
+
+        } catch (e: Exception) {
+            promise.reject("DIMENSION_ERROR", "Error reading image dimensions: ${e.message}", e)
+        }
+    }
+
+    /**
+     * �🚀 Carga SOLO una región específica de la imagen usando BitmapRegionDecoder
+     * 
+     * VENTAJA: Consume memoria proporcional a la REGIÓN, no a la imagen completa
+     * Ejemplo: Región 1280×1280 = ~6.5 MB vs Imagen 8160×6144 = ~150 MB
+     * 
+     * @param uriString URI de la imagen fuente
+     * @param x Coordenada X inicial de la región
+     * @param y Coordenada Y inicial de la región
+     * @param regionWidth Ancho de la región a extraer
+     * @param regionHeight Alto de la región a extraer
+     * @return Bitmap de la región especificada (redimensionado a 1280×1280 con letterbox)
+     */
+    private fun loadBitmapRegion(
+        uriString: String,
+        x: Int,
+        y: Int,
+        regionWidth: Int,
+        regionHeight: Int
+    ): Bitmap? {
+        try {
+            val cleanUri = uriString.replace("file://", "")
+            val file = File(cleanUri)
+
+            if (!file.exists()) {
+                Log.e(TAG, "❌ [loadBitmapRegion] File does not exist: $cleanUri")
+                return null
+            }
+
+            // Usar BitmapRegionDecoder para cargar SOLO la región
+            FileInputStream(file).use { inputStream ->
+                val decoder = BitmapRegionDecoder.newInstance(inputStream, false)
+                    ?: run {
+                        Log.e(TAG, "❌ [loadBitmapRegion] Failed to create BitmapRegionDecoder")
+                        return null
+                    }
+
+                // Obtener dimensiones reales de la imagen
+                val imageWidth = decoder.width
+                val imageHeight = decoder.height
+
+                Log.d(TAG, "🔍 [loadBitmapRegion] ============ DIAGNOSTICS START ============")
+                Log.d(TAG, "🔍 [loadBitmapRegion] Image dimensions: ${imageWidth}x${imageHeight}")
+                Log.d(TAG, "🔍 [loadBitmapRegion] Requested region: x=$x, y=$y, size=${regionWidth}x${regionHeight}")
+                Log.d(TAG, "🔍 [loadBitmapRegion] Requested rect would be: ($x, $y) to (${x + regionWidth}, ${y + regionHeight})")
+
+                // Ajustar rectángulo para que NO exceda los límites de la imagen
+                val adjustedRight = minOf(x + regionWidth, imageWidth)
+                val adjustedBottom = minOf(y + regionHeight, imageHeight)
+
+                Log.d(TAG, "🔍 [loadBitmapRegion] Adjusted right: $adjustedRight (limit: $imageWidth)")
+                Log.d(TAG, "🔍 [loadBitmapRegion] Adjusted bottom: $adjustedBottom (limit: $imageHeight)")
+
+                // Validar que el rectángulo sea válido
+                if (x >= imageWidth || y >= imageHeight || adjustedRight <= x || adjustedBottom <= y) {
+                    Log.e(TAG, "❌ [loadBitmapRegion] Invalid rect bounds!")
+                    Log.e(TAG, "   x >= imageWidth? ${x >= imageWidth}")
+                    Log.e(TAG, "   y >= imageHeight? ${y >= imageHeight}")
+                    Log.e(TAG, "   adjustedRight <= x? ${adjustedRight <= x}")
+                    Log.e(TAG, "   adjustedBottom <= y? ${adjustedBottom <= y}")
+                    decoder.recycle()
+                    return null
+                }
+
+                // Definir rectángulo ajustado a los límites de la imagen
+                val rect = Rect(x, y, adjustedRight, adjustedBottom)
+                Log.d(TAG, "✅ [loadBitmapRegion] Final rect: ($x, $y, $adjustedRight, $adjustedBottom)")
+                Log.d(TAG, "✅ [loadBitmapRegion] Rect size: ${rect.width()}x${rect.height()}")
+
+                // Opciones de decodificación
+                val options = BitmapFactory.Options().apply {
+                    inPreferredConfig = Bitmap.Config.ARGB_8888
+                    inSampleSize = 1 // Sin submuestreo (queremos full quality)
+                }
+
+                Log.d(TAG, "🔍 [loadBitmapRegion] Calling decoder.decodeRegion()...")
+                // Decodificar SOLO la región especificada
+                val regionBitmap = decoder.decodeRegion(rect, options)
+                decoder.recycle()
+
+                if (regionBitmap == null) {
+                    Log.e(TAG, "❌ [loadBitmapRegion] decoder.decodeRegion() returned NULL!")
+                    Log.e(TAG, "   This usually means the rect is invalid or exceeds image bounds")
+                    Log.e(TAG, "   Rect was: ($x, $y, $adjustedRight, $adjustedBottom)")
+                    Log.e(TAG, "   Image size: ${imageWidth}x${imageHeight}")
+                    Log.e(TAG, "============ DIAGNOSTICS END (FAILED) ============")
+                    return null
+                }
+
+                Log.d(TAG, "✅ [loadBitmapRegion] decoder.decodeRegion() SUCCESS!")
+                Log.d(TAG, "✅ [loadBitmapRegion] Decoded bitmap size: ${regionBitmap.width}x${regionBitmap.height}")
+                Log.d(TAG, "============ DIAGNOSTICS END (SUCCESS) ============")
+
+                // Aplicar letterbox para asegurar 1280×1280
+                val letterboxed = applyLetterbox(regionBitmap, 1280, 1280)
+                regionBitmap.recycle()
+
+                return letterboxed
+            }
+
+        } catch (e: Exception) {
+            e.printStackTrace()
+            return null
         }
     }
 

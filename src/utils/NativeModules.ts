@@ -38,6 +38,36 @@ interface ImagePixelModuleInterface {
   ): Promise<string>;
 
   /**
+   * 🚀 OPTIMIZADO: Extrae píxeles de REGIÓN específica sin cargar imagen completa
+   *
+   * Usa BitmapRegionDecoder nativo para cargar SOLO la región necesaria,
+   * eliminando OutOfMemory en imágenes grandes (>5000px).
+   *
+   * @param imageUri URI de la imagen fuente (file://)
+   * @param x Coordenada X inicial de la región
+   * @param y Coordenada Y inicial de la región
+   * @param width Ancho de la región (típicamente 1280)
+   * @param height Alto de la región (típicamente 1280)
+   * @returns Promise<string> - Path del archivo .bin con píxeles
+   *
+   * VENTAJA vs getImagePixels:
+   * - Región 1280×1280 de imagen 8160×6144: ~6.5 MB vs ~150 MB
+   * - Memoria constante independiente del tamaño de imagen origen
+   *
+   * @example
+   * const binPath = await ImagePixelModule.getImageRegionPixels(
+   *   'file:///image.jpg', 0, 0, 1280, 1280
+   * );
+   */
+  getImageRegionPixels(
+    imageUri: string,
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+  ): Promise<string>;
+
+  /**
    * Obtiene estadísticas de una imagen (para debugging)
    *
    * @param imageUri URI de la imagen
