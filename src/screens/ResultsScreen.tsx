@@ -3,6 +3,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Dimensions,
   FlatList,
   Image,
   ImageBackground,
@@ -292,9 +293,11 @@ const ResultsScreen = ({ route, navigation }: Props) => {
       <Text style={styles.title}>Resultados</Text>
 
       {results.map((item, idx) => {
-        // Para resizeMode: 'contain', debemos calcular el tamaño real de renderizado
-        const containerWidth = 350; // Ancho del card - padding (se ajustará dinámicamente)
-        const containerHeight = 300; // Alto del imgBox
+        // ✅ FIX: Calcular ancho REAL del contenedor basado en dimensiones de pantalla
+        // Layout: ScrollView(padding:15) > Card(padding:10) > imgBox(width:100%)
+        const screenWidth = Dimensions.get('window').width;
+        const containerWidth = screenWidth - 30 - 20; // 30px ScrollView padding + 20px Card padding
+        const containerHeight = 300; // Alto fijo del imgBox
 
         const imageAspect = item.width / item.height;
         const containerAspect = containerWidth / containerHeight;

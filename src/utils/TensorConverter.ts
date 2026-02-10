@@ -179,13 +179,45 @@ export const parseYoloOutput = (
           `   width=${width.toFixed(3)}, height=${height.toFixed(3)}`,
         );
         console.log(`   confidence=${confidence.toFixed(3)}`);
+        console.log(`   🔍 VALORES CRUDOS (sin multiplicar):`);
+        console.log(`      centerX=${centerX}, centerY=${centerY}`);
+        console.log(`      width=${width}, height=${height}`);
       }
 
-      // Convertir coordenadas normalizadas [0-1] a píxeles
-      const x = (centerX - width / 2) * imageWidth;
-      const y = (centerY - height / 2) * imageHeight;
-      const w = width * imageWidth;
-      const h = height * imageHeight;
+      // ⚠️ IMPORTANTE: Verificar si coordenadas vienen normalizadas [0-1] o en píxeles [0-1280]
+      // OPCIÓN A: Coordenadas normalizadas (asumción actual)
+      const isNormalized =
+        centerX <= 1.0 && centerY <= 1.0 && width <= 1.0 && height <= 1.0;
+
+      let x, y, w, h;
+
+      if (isNormalized) {
+        // Convertir coordenadas normalizadas [0-1] a píxeles
+        x = (centerX - width / 2) * imageWidth;
+        y = (centerY - height / 2) * imageHeight;
+        w = width * imageWidth;
+        h = height * imageHeight;
+      } else {
+        // Coordenadas ya vienen en píxeles (algunos modelos TFLite)
+        x = centerX - width / 2;
+        y = centerY - height / 2;
+        w = width;
+        h = height;
+      }
+
+      if (detections.length < 3) {
+        console.log(`   🎯 DESPUÉS DE CONVERSIÓN:`);
+        console.log(
+          `      Formato detectado: ${
+            isNormalized ? 'NORMALIZADO [0-1]' : 'PÍXELES ABSOLUTOS'
+          }`,
+        );
+        console.log(
+          `      x=${x.toFixed(1)}, y=${y.toFixed(1)}, w=${w.toFixed(
+            1,
+          )}, h=${h.toFixed(1)}`,
+        );
+      }
 
       // Validar que la caja sea razonable
       if (
